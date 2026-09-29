@@ -1,5 +1,6 @@
-# The Swag Contest: walk the 2 m lane at 0.25 m/s with style; visitors vote.
-# Nothing is timed. Make the walk yours.
+# The Swag Contest: a 20 s performance on a stage. The Arena plays your
+# timeline.json (when to sit, when to stand, where to look); visitors vote.
+# Nothing is timed. Make the moves yours.
 event = "swag-contest"
 task  = "Mjlab-SwagContest-MicroDuck"
 kind  = "perpetual"
@@ -9,20 +10,20 @@ num_envs       = 4096
 max_iterations = 3000
 seed           = 1
 
-[params.step_reward]
-label = "Lift your feet"
-value = 3.0
-min   = 0.0
-max   = 6.0
-
-[params.upright_reward]
-label = "Stay upright"
-value = 2.0
-min   = 0.5
-max   = 5.0
-
 [params.head_reward]
-label = "Head follows its command"
+label = "Follow the head moves"
+value = 0.75
+min   = 0.0
+max   = 2.0
+
+[params.stillness_reward]
+label = "Hold still between moves"
 value = 2.0
 min   = 0.0
 max   = 4.0
+
+[params.upright_reward]
+label = "Stay upright"
+value = 2.5
+min   = 0.5
+max   = 5.0

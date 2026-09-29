@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 from mjlab.tasks.registry import list_tasks
@@ -13,6 +14,7 @@ import microduck_challenges  # noqa: F401  (registers every task)
 from arena.manifest import load_event
 from mjlab_microduck import challenge
 from mjlab_microduck.robot.microduck_constants import (
+    MICRODUCK_STANDUP_ROBOT_CFG,
     MICRODUCK_WALK_ROBOT_CFG,
     MICRODUCK_WALK_ROLLERS_ROBOT_CFG,
 )
@@ -26,9 +28,9 @@ CHALLENGES = {
         "step_reward": ("air_time", 4.1),
     },
     "swag_contest": {
-        "step_reward": ("air_time", 5.2),
-        "upright_reward": ("upright", 0.9),
-        "head_reward": ("head_pose_tracking", 2.6),
+        "head_reward": ("head_pose_tracking", 1.3),
+        "stillness_reward": ("posture_stillness", 3.1),
+        "upright_reward": ("upright_linear", 3.7),
     },
     "hill_climb_1m5": {
         "forward_reward": ("track_linear_velocity", 3.7),
@@ -133,10 +135,28 @@ def test_the_event_is_open_on_the_installed_arena(folder):
 
 @pytest.mark.parametrize("folder", CHALLENGES)
 def test_the_robot_matches_the_events_rig(folder):
+    # One robot per rig. A legs challenge may use the standup variant, which is the
+    # same robot with the collision set a seated trunk needs (next test).
     env = importlib.import_module(f"microduck_challenges.{folder}.env")
     robot = env.make_env_cfg().scene.entities["robot"]
-    expected = {"legs": MICRODUCK_WALK_ROBOT_CFG, "rollers": MICRODUCK_WALK_ROLLERS_ROBOT_CFG}
-    assert robot is expected[load_event(_contract(folder).event).rig]
+    expected = {
+        "legs": (MICRODUCK_WALK_ROBOT_CFG, MICRODUCK_STANDUP_ROBOT_CFG),
+        "rollers": (MICRODUCK_WALK_ROLLERS_ROBOT_CFG,),
+    }
+    assert any(robot is cfg for cfg in expected[load_event(_contract(folder).event).rig])
+
+
+def test_the_standup_robot_is_the_walk_robot_with_other_collisions():
+    """One robot in every challenge (MJCF, masses, actuators); only the collision set may differ."""
+    walk, standup = MICRODUCK_WALK_ROBOT_CFG, MICRODUCK_STANDUP_ROBOT_CFG
+    assert standup.articulation == walk.articulation
+    assert standup.init_state == walk.init_state
+    a, b = walk.spec_fn().compile(), standup.spec_fn().compile()
+    assert [a.body(i).name for i in range(a.nbody)] == [b.body(i).name for i in range(b.nbody)]
+    assert [a.joint(i).name for i in range(a.njnt)] == [b.joint(i).name for i in range(b.njnt)]
+    for field in ("body_mass", "body_inertia", "body_ipos", "body_iquat", "body_pos", "body_quat",
+                  "jnt_range", "dof_armature", "dof_damping", "dof_frictionloss"):
+        np.testing.assert_allclose(getattr(a, field), getattr(b, field), err_msg=field)
 
 
 @pytest.mark.parametrize("folder", CHALLENGES)
