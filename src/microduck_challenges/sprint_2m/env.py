@@ -307,10 +307,12 @@ def make_env_cfg(
     cfg.rewards["track_angular_velocity"].params["std"] = math.sqrt(0.5)
 
     # The race itself: speed along the lane, whatever the command. At 2.5 m/s it
-    # pays 7.5/step, the bulk of the stack.
+    # pays 15/step, the bulk of the stack. Weight 6 (race2; was 3 in race1, where
+    # action_rate cost -2.4 and air_time paid +2.8 against forward_speed's +2.1,
+    # and strides stayed at 0.41 m against the leaders' 0.74 m).
     cfg.rewards["forward_speed"] = RewardTermCfg(
         func=sprint_rewards.forward_speed,
-        weight=3.0,
+        weight=6.0,
         params={"max_speed": RACE_MAX_SPEED},
     )
 
