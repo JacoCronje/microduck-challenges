@@ -21,6 +21,12 @@ MicroDuck Got a Talent is a performance, not a race: the Arena plays the entry's
 head_pitch, head_yaw, head_roll). Check a policy against a timeline with
 `uv run --frozen --group workshop python -m microduck_challenges.got_a_talent.check policy.onnx [--timeline FILE]`,
 and publish the timeline with the policy: `uv run publish … --timeline src/microduck_challenges/got_a_talent/timeline.json`.
+A performance can also make the duck heard: `"triggers": [rt, lt]` in a keyframe (RT quacks, LT
+wheees), a `song` of notes beside the keyframes, and a `voice` that tunes it (the Arena's
+[Got a Talent guide](https://pollen-robotics-microduck-arena.hf.space/#/e/got-a-talent/guide)).
+A performance can also be a troupe of up to 8 ducks in one physics. Each duck has its own policy
+(yours, or any public one on the Hub pinned to a commit, on legs or rollers), place, keyframes,
+voice and song: see the guide's Troupe and Placement sections.
 
 ## The workshop
 
@@ -37,7 +43,9 @@ before each training, trains on your NVIDIA GPU or on Hugging Face Jobs, and kee
 training: every checkpoint is evaluated with the Arena's own rules as it arrives. A training's page
 replays any checkpoint, and **Publish and compete** publishes the policy to your Hugging Face account
 **and enters** it on the Arena, then opens its result. On MicroDuck Got a Talent, a training's page
-also edits `timeline.json`, your performance, and plays it with the checkpoint you pick. From a clone,
+also edits `timeline.json`, your performance, places its ducks on a plan of the stage, and plays it
+with the checkpoint you pick. Publish and compete publishes every duck of a troupe in one click.
+From a clone,
 `uv run --group workshop workshop` opens the home and `uv run --group workshop workshop sprint-2m`
 opens one challenge.
 

@@ -3,8 +3,9 @@
     uv run --frozen --group workshop python -m microduck_challenges.got_a_talent.check policy.onnx [--timeline FILE]
 
 Plays the stage the way the Arena scores an entry (arena.evaluate, with this
-folder's timeline.json by default), then checks the performance against the
-timeline, keyframe by keyframe:
+folder's timeline.json by default; for a troupe, the star alone on its own
+keyframes, since the other ducks are other policies), then checks the
+performance against the star's timeline, keyframe by keyframe:
 
 - no fall, by the event's own rule;
 - at the start, and after each change of the sit flag (twist.vx): seated
@@ -25,10 +26,11 @@ from pathlib import Path
 import numpy as np
 from arena import stage
 from arena.constants import CTRL_DT, DEFAULT_POSE, JOINT_NAMES
+from arena.cast import cast_of
 from arena.evaluate import evaluate
 from arena.manifest import load_event
 from arena.policy import PolicyError, load_policy
-from arena.timeline import Timeline, TimelineError, load_timeline
+from arena.timeline import Timeline, TimelineError, load_troupe, solo
 
 EVENT = "got-a-talent"
 TIMELINE = Path(__file__).with_name("timeline.json")
@@ -110,12 +112,14 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     event = load_event(EVENT)
     try:
-        timeline = load_timeline(Path(args.timeline), event.time_limit_s)
-        result = evaluate(event, load_policy(Path(args.onnx)), timeline)
+        # The workshop's own file may name checkpoints of this machine; only the star plays here.
+        timeline = load_troupe(Path(args.timeline), event, allow_local=True).ducks[0].timeline
+        policy = load_policy(Path(args.onnx))
+        result = evaluate(event, policy, cast_of(event, solo(timeline), policy, None, {}).performers)
     except (TimelineError, PolicyError) as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
-    lines, passed, head_error = report(result.trace, timeline, event.termination)
+    lines, passed, head_error = report(result.trace[0], timeline, event.termination)
     passed = passed and result.seeds_finished == 1
     print("\n".join(lines))
     print(f"{'PASS' if passed else 'FAIL'}: largest head error {head_error:.2f} rad")

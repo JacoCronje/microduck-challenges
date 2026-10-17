@@ -57,6 +57,20 @@ From each keyframe's `t` until the next one, the policy reads that keyframe's nu
 keyframe leaves out is zeros, not the previous value. The first keyframe is at 0, times go up, at most
 1000 keyframes, every number within ±10, `duration_s` at most 20.
 
+A performance can also make the duck heard, with nothing for the policy to learn: `triggers` in a
+keyframe (RT quacks, LT wheees), a `song` of notes beside the keyframes, and a `voice` block that
+tunes the duck's voice. The Arena's
+[Got a Talent guide](https://pollen-robotics-microduck-arena.hf.space/#/e/got-a-talent/guide) has the
+rules. Offer it to the user when the performance wants sound; never add it without asking.
+
+A performance can also be a **troupe** of up to 8 ducks in one shared physics. The star is this
+folder's policy (`"self"`); the others are any policy, the user's or a public one pinned to a full
+commit, on legs or rollers. Each duck has its own place, keyframes, voice and song, and each duck's
+keyframes are commands for its own policy. The Arena's
+[Got a Talent guide](https://pollen-robotics-microduck-arena.hf.space/#/e/got-a-talent/guide) has the
+format and the rules in its Troupe and Placement sections. Offer it when the user wants company on
+stage; never add a duck, nor borrow someone's policy, without asking.
+
 **What the policy can do is what training showed it.** This training samples:
 
 - the sit flag at exactly 0 or 1 (values in between were never seen);
@@ -139,7 +153,7 @@ their account, which needs a payment method; the 3000-iteration recipe took 2 h 
    `uv run --group workshop arena score <policy.onnx> --event got-a-talent --timeline src/microduck_challenges/got_a_talent/timeline.json`
    prints the Arena's own summary (length played, fall, seconds seated and standing).
 3. Show it: the workshop (`uv run --group workshop workshop got-a-talent`) edits `timeline.json` on a
-   training's page and plays it with the checkpoint the user picks.
+   training's page, places a troupe's ducks on a plan of the stage, and plays it with the checkpoint the user picks.
 4. Commit it: `git add src/microduck_challenges/got_a_talent && git commit -m "<what the performance does>"`.
 
 ### Each training
@@ -205,8 +219,8 @@ the user will publish:
 
 - If the user has the workshop open, it finds every run under `logs/rsl_rl/`, yours included, and
   plays the timeline with each checkpoint as it arrives. Its results:
-  `logs/rsl_rl/got_a_talent/<run>/workshop/model_<N>.json` (`stage`: `fell_at`, `seated_s`,
-  `standing_s`).
+  `logs/rsl_rl/got_a_talent/<run>/workshop/model_<N>.json` (`stage`: `fell_at`, `seated_s` and
+  `standing_s` for each duck, the star first).
 - Otherwise:
 
   ```bash

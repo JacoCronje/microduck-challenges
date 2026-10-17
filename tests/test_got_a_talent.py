@@ -12,7 +12,7 @@ from arena.assets import ASSET_ROOT
 from arena.constants import CTRL_DT, DECIMATION, DEFAULT_POSE, JOINT_NAMES, TRACE_WIDTH
 from arena.course import compile_course
 from arena.manifest import load_event
-from arena.timeline import Timeline, load_timeline
+from arena.timeline import Timeline, load_troupe
 from mjlab_microduck.tasks import mdp as microduck_mdp
 
 
@@ -130,13 +130,13 @@ TIMELINE = Path(microduck_challenges.__file__).parent / "got_a_talent" / "timeli
 
 
 def test_the_reference_timeline_plays_on_the_arena():
-    timeline = load_timeline(TIMELINE, load_event("got-a-talent").time_limit_s)
+    timeline = load_troupe(TIMELINE, load_event("got-a-talent")).ducks[0].timeline
     assert timeline.duration_s == 20.0
     assert len(timeline.times) == 9
 
 
 def test_the_reference_timeline_stays_inside_what_training_saw(cfg):
-    timeline = load_timeline(TIMELINE, load_event("got-a-talent").time_limit_s)
+    timeline = load_troupe(TIMELINE, load_event("got-a-talent")).ducks[0].timeline
     final = cfg.curriculum["head_pose_range"].params["range_stages"][-1]["ranges"]
     dwell = cfg.commands["twist"].resampling_time_range[0]
     head_every = cfg.commands["head_pose"].resampling_time_range[0]
@@ -229,6 +229,23 @@ def test_check_plays_the_stage_and_fails_a_walker(capsys):
     out = capsys.readouterr().out.splitlines()
     assert len(out) == 9 + 2  # a line per keyframe, the fall line, the verdict
     assert out[-1].startswith("FAIL: largest head error ")
+
+
+def test_check_reads_a_troupes_star_alone(tmp_path, capsys):
+    """A troupe's other ducks are other policies: the check plays the star alone, on its own keyframes."""
+    import json
+
+    from microduck_challenges.got_a_talent import check
+
+    reference = json.loads(TIMELINE.read_text())
+    troupe = tmp_path / "timeline.json"
+    troupe.write_text(json.dumps({"timeline_version": 2, "duration_s": reference["duration_s"], "ducks": [
+        {"policy": "self", "keyframes": reference["keyframes"]},
+        {"policy": "local:got_a_talent/first@1", "start": {"x": 0.0, "y": 0.6, "yaw": 0}, "keyframes": [{"t": 0.0}]},
+    ]}))
+    assert check.main([str(ASSET_ROOT / "policies" / "BEST_alpha_walking.onnx"), "--timeline", str(troupe)]) == 1
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 9 + 2  # the star's keyframes, the fall line, the verdict
 
 
 def test_check_refuses_a_malformed_timeline(tmp_path, capsys):
