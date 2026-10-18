@@ -333,12 +333,32 @@ def make_env_cfg(
         params={"std": 0.4, "asset_cfg": SceneEntityCfg("robot")},
     )
 
-    # Action smoothness: held at -0.1 (no ramp to -1.0, which taxed fast legs).
-    cfg.rewards["action_rate_l2"].weight = -0.1
+    # Action smoothness: -0.02 since race4 (-0.1 in race1-3, where it was the
+    # largest cost, -3.0, and every run bought speed with cadence instead of
+    # stride: doubling a stride at the same cadence about quadruples it).
+    cfg.rewards["action_rate_l2"].weight = -0.02
 
+    # Longer strides (race4): each touchdown pays the step's length past 0.30 m,
+    # capped at 0.70 m. race3 stepped 0.35 m; the leaders step 0.57-0.64 m.
+    cfg.rewards["stride_length"] = RewardTermCfg(
+        func=sprint_rewards.stride_length,
+        weight=4.0,
+        params={
+            "sensor_name": feet_ground_cfg.name,
+            "threshold": 0.30,
+            "max_length": 0.70,
+            "asset_cfg": SceneEntityCfg("robot", site_names=tuple(site_names), preserve_order=True),
+        },
+    )
+
+    # Foot height penalties off since race4 (were -2.0 and -0.25, both targeting
+    # 2 cm): the leaders swing their feet 14-16 cm high, ours reached 7-8 cm, and
+    # foot_clearance's cost grows with foot speed, taxing exactly a long stride.
+    cfg.rewards["foot_clearance"].weight = 0.0
     cfg.rewards["foot_clearance"].params["command_threshold"] = 0.01
     cfg.rewards["foot_clearance"].params["target_height"] = 0.02  # Increased from 0.01 to penalize dragging
 
+    cfg.rewards["foot_swing_height"].weight = 0.0
     cfg.rewards["foot_swing_height"].params["command_threshold"] = 0.01
     cfg.rewards["foot_swing_height"].params["target_height"] = 0.02  # Increased from 0.01 to force foot lifting
 

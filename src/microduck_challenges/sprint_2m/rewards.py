@@ -19,6 +19,19 @@ def _yaw(quat: torch.Tensor) -> torch.Tensor:
     return torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
+def _race_direction(env: ManagerBasedRlEnv, asset) -> torch.Tensor:
+    """Unit xy vector of the lane: the heading the robot spawned with, (N, 2).
+
+    Captured on an episode's first steps, as heading_hold does (its own copy, so
+    the terms do not depend on their order); calling it twice in a step is harmless.
+    """
+    yaw = _yaw(asset.data.root_link_quat_w)
+    if not hasattr(env, "_race_heading") or env._race_heading.shape[0] != env.num_envs:
+        env._race_heading = yaw.clone()
+    env._race_heading = torch.where(env.episode_length_buf <= 1, yaw, env._race_heading)
+    return torch.stack((torch.cos(env._race_heading), torch.sin(env._race_heading)), dim=-1)
+
+
 def forward_speed(
     env: ManagerBasedRlEnv,
     max_speed: float,
@@ -27,21 +40,43 @@ def forward_speed(
     """Speed along the spawn heading (m/s), capped at max_speed: the race's progress.
 
     The lane runs along the heading the robot spawns with, so this is the rate the
-    Arena's clock rewards, whatever the command and however the trunk pitches. The
-    spawn heading is captured on an episode's first steps, as heading_hold does
-    (its own copy, so the two terms do not depend on their order). Going backwards
-    pays negative; the cap stops a dive's burst of speed from paying more than the
-    leaders' top speed.
+    Arena's clock rewards, whatever the command and however the trunk pitches.
+    Going backwards pays negative; the cap stops a dive's burst of speed from
+    paying more than the leaders' top speed.
     """
     asset = env.scene[asset_cfg.name]
-    yaw = _yaw(asset.data.root_link_quat_w)
-    if not hasattr(env, "_race_heading") or env._race_heading.shape[0] != env.num_envs:
-        env._race_heading = yaw.clone()
-    env._race_heading = torch.where(env.episode_length_buf <= 1, yaw, env._race_heading)
-
-    vel = asset.data.root_link_lin_vel_w
-    along = vel[:, 0] * torch.cos(env._race_heading) + vel[:, 1] * torch.sin(env._race_heading)
+    along = (asset.data.root_link_lin_vel_w[:, :2] * _race_direction(env, asset)).sum(-1)
     return torch.clamp(along, max=max_speed)
+
+
+def stride_length(
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    threshold: float,
+    max_length: float,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """At each touchdown, how far that foot travelled along the lane since liftoff, past threshold (m).
+
+    Summed distance alone would only re-pay speed (both feet cover the whole
+    course); paying the length beyond threshold per step favours fewer, longer
+    strides at the same speed. Contact flicker inside a stance makes steps far
+    shorter than threshold, so it pays nothing. Capped at max_length.
+    asset_cfg's site_names are the feet, in the contact sensor's order.
+    """
+    asset = env.scene[asset_cfg.name]
+    sensor = env.scene[sensor_name]
+    feet = asset.data.site_pos_w[:, asset_cfg.site_ids, :2]  # (N, 2 feet, xy)
+    if not hasattr(env, "_foot_liftoff") or env._foot_liftoff.shape != feet.shape:
+        env._foot_liftoff = feet.clone()
+    new_episode = (env.episode_length_buf <= 1)[:, None, None]
+    lifted = sensor.compute_first_air(env.step_dt)[:, :, None]
+    env._foot_liftoff = torch.where(new_episode | lifted, feet, env._foot_liftoff)
+
+    travel = ((feet - env._foot_liftoff) * _race_direction(env, asset)[:, None, :]).sum(-1)
+    landed = sensor.compute_first_contact(env.step_dt)
+    pay = (travel - threshold).clamp(0.0, max_length - threshold)
+    return (pay * landed).sum(-1)
 
 
 def tilt_guard(
