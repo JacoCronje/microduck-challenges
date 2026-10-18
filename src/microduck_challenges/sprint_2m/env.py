@@ -257,10 +257,13 @@ def make_env_cfg(
     # upright is a tilt guard: free up to 45°, drained to 0 at 60° (the Arena's
     # fall line). The old Gaussian (2.0 / std²=0.05) paid 0.7% at 30° and held
     # the trunk level; the leaders pitch 10-30° and lunge further.
+    # One-sided since race3: leaning back is free only to 5°, drained at 20°.
+    # race2 short-stepped (0.35 m strides, 4.3 Hz) leaning back 18°, a braking
+    # posture; the leaders lean forward and stride 0.74 m.
     cfg.rewards["upright"] = RewardTermCfg(
         func=sprint_rewards.tilt_guard,
         weight=knobs["upright_reward"],
-        params={"free_deg": 45.0, "zero_deg": 60.0},
+        params={"free_deg": 45.0, "zero_deg": 60.0, "back_free_deg": 5.0, "back_zero_deg": 20.0},
     )
 
     # Foot-specific configurations. In mjlab 1.3.0 foot_swing_height is fully

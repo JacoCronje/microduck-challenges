@@ -48,15 +48,21 @@ def tilt_guard(
     env: ManagerBasedRlEnv,
     free_deg: float,
     zero_deg: float,
+    back_free_deg: float = 180.0,
+    back_zero_deg: float = 180.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
     """1 while the trunk tilts less than free_deg, falling linearly to 0 at zero_deg.
 
     Any lean up to free_deg is free (no gradient toward level); past it the reward
-    drains before the Arena's fall line (60° held for 0.3 s).
+    drains before the Arena's fall line (60° held for 0.3 s). Leaning back (nose
+    up) has its own, tighter band: free to back_free_deg, 0 at back_zero_deg.
     """
-    asset = env.scene[asset_cfg.name]
-    cos_tilt = (-asset.data.projected_gravity_b[:, 2]).clamp(-1.0, 1.0)
-    tilt = torch.rad2deg(torch.acos(cos_tilt))
-    return ((zero_deg - tilt) / (zero_deg - free_deg)).clamp(0.0, 1.0)
+    gravity = env.scene[asset_cfg.name].data.projected_gravity_b
+    tilt = torch.rad2deg(torch.acos((-gravity[:, 2]).clamp(-1.0, 1.0)))
+    # gravity's body-x component is sin(pitch), positive nose down.
+    back = torch.rad2deg(torch.asin((-gravity[:, 0]).clamp(-1.0, 1.0)))
+    guard = ((zero_deg - tilt) / (zero_deg - free_deg)).clamp(0.0, 1.0)
+    back_guard = ((back_zero_deg - back) / (back_zero_deg - back_free_deg)).clamp(0.0, 1.0)
+    return torch.minimum(guard, back_guard)
 
