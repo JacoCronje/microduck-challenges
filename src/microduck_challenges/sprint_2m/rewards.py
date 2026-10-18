@@ -63,6 +63,11 @@ def stride_length(
     strides at the same speed. Contact flicker inside a stance makes steps far
     shorter than threshold, so it pays nothing. Capped at max_length.
     asset_cfg's site_names are the feet, in the contact sensor's order.
+
+    Divided by step_dt: the reward manager multiplies every term by step_dt,
+    right for a rate paid every step but 50x too weak for a once-per-touchdown
+    payment (race4 and race5 logged 0.007-0.013 for it). Per second, a gait then
+    earns weight x (sum of steps' length past threshold).
     """
     asset = env.scene[asset_cfg.name]
     sensor = env.scene[sensor_name]
@@ -76,7 +81,7 @@ def stride_length(
     travel = ((feet - env._foot_liftoff) * _race_direction(env, asset)[:, None, :]).sum(-1)
     landed = sensor.compute_first_contact(env.step_dt)
     pay = (travel - threshold).clamp(0.0, max_length - threshold)
-    return (pay * landed).sum(-1)
+    return (pay * landed).sum(-1) / env.step_dt
 
 
 def tilt_guard(
