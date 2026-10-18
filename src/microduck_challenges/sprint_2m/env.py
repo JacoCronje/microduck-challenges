@@ -333,13 +333,15 @@ def make_env_cfg(
         params={"std": 0.4, "asset_cfg": SceneEntityCfg("robot")},
     )
 
-    # Action smoothness: -0.02 since race4 (-0.1 in race1-3, where it was the
-    # largest cost, -3.0, and every run bought speed with cadence instead of
-    # stride: doubling a stride at the same cadence about quadruples it).
-    cfg.rewards["action_rate_l2"].weight = -0.02
+    # Action smoothness: held at -0.1. race4 tried -0.02 from scratch: a jittery
+    # gait (5x the action change), 3x the falls, 2/5 Arena finishes.
+    cfg.rewards["action_rate_l2"].weight = -0.1
 
     # Longer strides (race4): each touchdown pays the step's length past 0.30 m,
     # capped at 0.70 m. race3 stepped 0.35 m; the leaders step 0.57-0.64 m.
+    # A policy learning from scratch steps far shorter than 0.30 m, so this pays
+    # nothing then (race4: 0.007): fine-tune a walker that already reaches it
+    # (race5 resumes race3's checkpoint 2750).
     cfg.rewards["stride_length"] = RewardTermCfg(
         func=sprint_rewards.stride_length,
         weight=4.0,
