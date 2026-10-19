@@ -49,6 +49,24 @@ def forward_speed(
     return torch.clamp(along, max=max_speed)
 
 
+def lateral_drift(
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Sideways speed across the lane (m/s, >= 0): a cost, so give it a negative weight.
+
+    heading_hold prices where the trunk faces, not where it goes: race6's walker
+    faced the lane yet crabbed left 26-30 cm over 2 m, and every fall was it
+    meeting the left wall. Training has no walls, so nothing else prices this.
+    Unlike the refuted lane_hold (a Gaussian on the position), this costs nothing
+    while running straight, wherever in the lane.
+    """
+    asset = env.scene[asset_cfg.name]
+    lane = _race_direction(env, asset)
+    across = torch.stack((-lane[:, 1], lane[:, 0]), dim=-1)
+    return (asset.data.root_link_lin_vel_w[:, :2] * across).sum(-1).abs()
+
+
 def stride_length(
     env: ManagerBasedRlEnv,
     sensor_name: str,

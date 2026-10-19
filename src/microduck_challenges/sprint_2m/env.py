@@ -319,6 +319,13 @@ def make_env_cfg(
         params={"max_speed": RACE_MAX_SPEED},
     )
 
+    # Sideways speed costs what forward speed earns (race7): race6's checkpoints
+    # crabbed left 26-30 cm over 2 m and every Arena fall was the left wall.
+    cfg.rewards["lateral_drift"] = RewardTermCfg(
+        func=sprint_rewards.lateral_drift,
+        weight=-6.0,
+    )
+
     # Walk straight. The Arena commands yaw 0 and never tells the policy its
     # heading, and nothing above prices a slow drift: at this std a 0.07 rad/s
     # turn keeps 99% of track_angular_velocity. Unpriced, the first reference
