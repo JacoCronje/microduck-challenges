@@ -321,9 +321,11 @@ def make_env_cfg(
 
     # Sideways speed costs what forward speed earns (race7): race6's checkpoints
     # crabbed left 26-30 cm over 2 m and every Arena fall was the left wall.
+    # Off while a gait is discovered, ramped to -6 by iter 1000 (curriculum
+    # lateral_drift_weight below): early flailing is mostly sideways.
     cfg.rewards["lateral_drift"] = RewardTermCfg(
         func=sprint_rewards.lateral_drift,
-        weight=-6.0,
+        weight=0.0,
     )
 
     # Walk straight. The Arena commands yaw 0 and never tells the policy its
@@ -334,10 +336,13 @@ def make_env_cfg(
     # heading (the roller's term and std): the policy cannot see its heading,
     # but it can learn to null its gait's mean yaw rate. The critic sees the
     # heading error (heading_error, below) so it can value what this term pays.
+    # race8: std 0.4 -> 0.2, weight 1 -> 2. At std 0.4 a 10° turn kept 83%, at
+    # 0.2 it keeps 47% (15°: 65% -> 18%). race7's wall hits came with the duck
+    # turned left 67-98°.
     cfg.rewards["heading_hold"] = RewardTermCfg(
         func=microduck_mdp.heading_hold_reward,
-        weight=1.0,
-        params={"std": 0.4, "asset_cfg": SceneEntityCfg("robot")},
+        weight=2.0,
+        params={"std": 0.2, "asset_cfg": SceneEntityCfg("robot")},
     )
 
     # Action smoothness: held at -0.1. race4 tried -0.02 from scratch: a jittery
@@ -347,8 +352,8 @@ def make_env_cfg(
     # Longer strides (race4): each touchdown pays the step's length past 0.30 m,
     # capped at 0.70 m. race3 stepped 0.35 m; the leaders step 0.57-0.64 m.
     # A policy learning from scratch steps far shorter than 0.30 m, so this pays
-    # nothing then (race4: 0.007): fine-tune a walker that already reaches it
-    # (race5 resumes race3's checkpoint 2750).
+    # nothing until its gait reaches that length (race3 did, from scratch,
+    # without it).
     cfg.rewards["stride_length"] = RewardTermCfg(
         func=sprint_rewards.stride_length,
         weight=4.0,
@@ -767,6 +772,20 @@ def make_env_cfg(
 
     # No action_rate ramp (it reached -1.0 by iter 1500 and taxed fast legs) and
     # no standing_envs ramp (the Arena never commands a stop).
+
+    # lateral_drift: off until a gait exists, then up to forward_speed's weight.
+    cfg.curriculum["lateral_drift_weight"] = CurriculumTermCfg(
+        func=microduck_mdp.reward_weight,
+        params={
+            "reward_name": "lateral_drift",
+            "weight_stages": [
+                {"step": 0, "weight": 0.0},
+                {"step": 500 * NUM_STEPS_PER_ENV, "weight": -2.0},
+                {"step": 750 * NUM_STEPS_PER_ENV, "weight": -4.0},
+                {"step": 1000 * NUM_STEPS_PER_ENV, "weight": -6.0},
+            ],
+        },
+    )
 
     # NOTE: no velocity-command-range curriculum — ranges are fixed (see the
     # command section above). Same for head_pose: no range curriculum — the
