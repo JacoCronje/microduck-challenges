@@ -37,8 +37,11 @@ from copy import deepcopy
 
 NUM_STEPS_PER_ENV = 24
 
-# Symmetry
-ENABLE_SYMMETRY = False
+# Symmetry (race9): a mirror loss makes the policy act as its own mirror image on
+# mirrored observations, so its gait cannot carry a built-in sideways lean. The
+# actor cannot see its heading or lane position, so no reward can correct a
+# drift once started: race6/7 crabbed left, race8 right, into the walls.
+ENABLE_SYMMETRY = True
 
 # Domain randomization toggles
 ENABLE_COM_RANDOMIZATION = True
