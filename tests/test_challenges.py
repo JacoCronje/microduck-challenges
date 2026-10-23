@@ -39,7 +39,7 @@ CHALLENGES = {
         "max_slope_deg": (None, 12.0),
     },
     "roller_sprint_2m": {
-        "speed_reward": ("wheel_speed", 13.5),
+        "speed_reward": ("forward_speed", 13.5),
         "upright_reward": ("upright", 1.3),
     },
 }
@@ -77,8 +77,8 @@ def test_walking_training_reaches_the_top_of_the_sweep(folder):
     assert lin_vel_x[1] >= event.sweep.hi
 
 
-@pytest.mark.parametrize("folder", ["sprint_2m", "hill_climb_1m5"])
-def test_walking_races_train_to_hold_their_heading(folder):
+@pytest.mark.parametrize("folder", RACES)
+def test_races_train_to_hold_their_heading(folder):
     # The Arena commands yaw 0 and never tells the actor its heading, so a drift
     # into the lane's wall is only priced by heading_hold; the critic sees what
     # it prices, the actor only what the Arena feeds it.
@@ -94,7 +94,7 @@ def _yaw_quat(yaws):
     return torch.stack([half.cos(), zero, zero, half.sin()], dim=-1)
 
 
-@pytest.mark.parametrize("folder", ["sprint_2m", "hill_climb_1m5"])
+@pytest.mark.parametrize("folder", RACES)
 def test_the_critic_sees_the_heading_error_heading_hold_prices(folder):
     env_module = importlib.import_module(f"microduck_challenges.{folder}.env")
     robot = SimpleNamespace(data=SimpleNamespace(root_link_quat_w=_yaw_quat([0.3, 3.0, 1.0])))

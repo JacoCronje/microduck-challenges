@@ -18,30 +18,35 @@ sim2real machinery, and updated for the NEW roller model:
     XML PD — an actuator-physics mismatch, and no joint-friction DR).
   - Obs migrated to the unified 61D layout (twist + zero-padded head/body
     command slots) so roller policies load through the runtime's
-    --new-cmd-obs path. Symmetry OFF (SYMMETRY_CFG is hardcoded for the old
-    51D layout).
+    --new-cmd-obs path. Symmetry was OFF then (SYMMETRY_CFG was hardcoded
+    for the old 51D layout); it is on again since race1 (see ENABLE_SYMMETRY).
   - DR/noise/delays matched to the velocity env's FIXED (non-accumulating,
     per-env-verified) versions. Wheel-bearing frictionloss DR was REMOVED: the
     Arena's roller model's wheels are frictionless, and training against added
     bearing friction breaks the policy once raced there.
 
-Task design (the roller recipe):
-  cmd_x semantics: 0 = coast, >0 = push to accelerate, <0 = brake. The Arena
-  commands 0.30-2.00 m/s (arena/events/roller-sprint-2m.toml) and keeps the
-  best time; the policy's best is found within its trained 0-0.6 (see the
-  range comment below).
-  cmd[2] = heading error via RelativeHeadingVelocityCommand.
-  Sole positive task reward is wheel_speed — the robot must actually spin its
-  wheels; braking/skating_air_time/forward_lean/heading_tracking shape the
-  skating style.
+Race shaping (race1, rewards.py; the 2 m Sprint's race recipe on skates). The
+Arena runs the policy through its 0.5 s settle with the clock stopped, then
+times 2 m from wherever the duck is: the leaders skate through the start line
+at 1.3 m/s and cross the finish at 2.4-2.5 m/s, the trunk pitched 15-20° (up to
+50° at the line), hip_roll swinging between its ±0.38 rad stops, the neck thrown
+forward. The source task's calm skate (wheel_speed's tanh saturating at
+0.3 m/s, glide/single_support/air-time shaping, action_rate ramped to -2) gave
+the reference's 0.65 m/s. Everything that held the duck to it is gone:
+forward_speed pays the race's progress whatever the command, upright is a tilt
+guard that only drains past 45°, the head and hips are free, action_rate stays
+light, episodes are a 3 s race without pushes.
 """
 
 import math
 from copy import deepcopy
 
-# Symmetry — OFF: SYMMETRY_CFG's obs permutation is hardcoded for the old 51D
-# layout and breaks on the 61D obs (same situation as all other v1.5+ envs).
-ENABLE_SYMMETRY = False
+# Symmetry (the sprint's race9): a mirror loss makes the policy act as its own
+# mirror image on mirrored observations, so its stroke cannot carry a built-in
+# sideways lean. The actor cannot see its heading or lane position, so no reward
+# can correct a drift once started. SYMMETRY_CFG covers the 61D layout since
+# mjlab_microduck's 2026-08 migration.
+ENABLE_SYMMETRY = True
 
 # ── Domain randomisation toggles (matched to the velocity env) ────────────────
 ENABLE_COM_RANDOMIZATION             = True
@@ -49,7 +54,7 @@ ENABLE_HEAD_COM_RANDOMIZATION        = True
 ENABLE_MASS_INERTIA_RANDOMIZATION    = True
 ENABLE_JOINT_FRICTION_RANDOMIZATION  = True   # BAM friction budget per-env (legs)
 ENABLE_ARMATURE_RANDOMIZATION        = True   # legs only — NOT the wheel bearings
-ENABLE_VELOCITY_PUSHES               = True
+ENABLE_VELOCITY_PUSHES               = False  # the Arena races without pushes; a 3 s race has no room to recover
 ENABLE_IMU_ORIENTATION_RANDOMIZATION = True   # obs-level per-env rotation
 ENABLE_ENCODER_BIAS                  = True
 
@@ -63,6 +68,12 @@ VELOCITY_PUSH_INTERVAL_S         = (3.0, 6.0)
 VELOCITY_PUSH_RANGE              = (-0.2, 0.2)  # roller-specific: gentler than walk ±0.3
 IMU_ORIENTATION_RANDOMIZATION_ANGLE = 6.0
 ENCODER_BIAS_RANGE               = (-0.015, 0.015)
+
+# The race: the Arena's 2 m take the leaders about 1 s after the 0.5 s settle,
+# so an episode is a 3 s sprint from the stand, not a 20 s skate.
+NUM_STEPS_PER_ENV = 24
+RACE_EPISODE_S = 3.0
+RACE_MAX_SPEED = 3.0  # m/s, forward_speed's cap: above the leaders' 2.5
 
 # The head assembly's bodies, for the head CoM randomization. The head-roll
 # body is named bottom_head_shell in the walk model and jaw_soft in the
@@ -78,7 +89,8 @@ HEAD_BODY_NAMES = (
     "bearing_roll",
 )
 
-from mjlab.envs import ManagerBasedRlEnvCfg
+import torch
+from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import (
@@ -103,6 +115,22 @@ from mjlab_microduck import challenge
 from mjlab_microduck.robot.microduck_constants import MICRODUCK_WALK_ROLLERS_ROBOT_CFG
 from mjlab_microduck.tasks import mdp as microduck_mdp
 from mjlab_microduck.tasks.symmetry import PpoWithSymmetryCfg, SYMMETRY_CFG
+
+from . import rewards as roller_rewards
+
+
+def heading_error(env: ManagerBasedRlEnv) -> torch.Tensor:
+    """How far the trunk has turned from the heading heading_hold holds (rad, wrapped).
+
+    Critic-only: the Arena never tells the actor its heading. Reads the spawn
+    heading heading_hold_reward captures (env._heading_ref); zero on an
+    episode's first observation, which comes before that reward captures it.
+    """
+    w, x, y, z = env.scene["robot"].data.root_link_quat_w.unbind(-1)
+    yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    reference = torch.where(env.episode_length_buf == 0, yaw, getattr(env, "_heading_ref", yaw))
+    error = yaw - reference
+    return torch.atan2(torch.sin(error), torch.cos(error)).unsqueeze(-1)
 
 
 def make_env_cfg(
@@ -197,181 +225,93 @@ def make_env_cfg(
         if name not in keep:
             del cfg.rewards[name]
 
-    cfg.rewards["pose"].params["std_standing"] = std_standing
-    cfg.rewards["pose"].params["std_walking"] = std_walking
-    cfg.rewards["pose"].params["std_running"] = std_running
+    # Pose on the legs only, weight 2.0 -> 0.5 (the sprint's race value): a
+    # motion-blocker for a race. The head is free (see the neck terms below).
+    def legs(std):
+        return {k: v for k, v in std.items() if not any(n in k for n in ("neck", "head", "passive_"))}
+
+    cfg.rewards["pose"].params["std_standing"] = legs(std_standing)
+    cfg.rewards["pose"].params["std_walking"] = legs(std_walking)
+    cfg.rewards["pose"].params["std_running"] = legs(std_running)
     cfg.rewards["pose"].params["walking_threshold"] = 0.01
     cfg.rewards["pose"].params["running_threshold"] = 0.5
-    cfg.rewards["pose"].weight = 2.0
+    cfg.rewards["pose"].params["asset_cfg"] = SceneEntityCfg(
+        "robot", joint_names=(r"^(?!passive_|.*neck.*|.*head.*).*",)
+    )
+    cfg.rewards["pose"].weight = 0.5
 
-    cfg.rewards["upright"].params["asset_cfg"].body_names = ("trunk_base",)
-    cfg.rewards["upright"].weight = knobs["upright_reward"]
+    # upright is a tilt guard: free up to 45°, drained to 0 at 60° (the Arena's
+    # fall line); leaning back free only to 5°, drained at 20° (the sprint's
+    # race3: leaning back is a braking posture). The old Gaussian held the trunk
+    # level; the leaders skate pitched 15-20° and up to 50° at the line.
+    cfg.rewards["upright"] = RewardTermCfg(
+        func=roller_rewards.tilt_guard,
+        weight=knobs["upright_reward"],
+        params={"free_deg": 45.0, "zero_deg": 60.0, "back_free_deg": 5.0, "back_zero_deg": 20.0},
+    )
 
     cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("trunk_base",)
     cfg.rewards["body_ang_vel"].weight = -0.05
     cfg.rewards["angular_momentum"].weight = -0.02
-    cfg.rewards["action_rate_l2"].weight = -1.0
+    # Action smoothness held at -0.1 (the sprint's race value; was -1.0 ramped to
+    # -2.0 for a calm skate). The sprint's race4 tried -0.02 from scratch: a
+    # jittery gait, 3x the falls.
+    cfg.rewards["action_rate_l2"].weight = -0.1
 
-    cfg.rewards["com_height_target"] = RewardTermCfg(
-        func=microduck_mdp.com_height_target,
-        weight=2.0,
-        params={"target_height_min": 0.0935, "target_height_max": 0.1235},
-    )
     cfg.rewards["self_collisions"] = RewardTermCfg(
         func=mdp.self_collision_cost,
         weight=-1.0,
         params={"sensor_name": "self_collision"},
     )
-    # Gated to the STANCE foot only (sensor_name) so lifting the swing foot is no
-    # longer punished — the old ungated -5.0 was minimised by keeping both blades
-    # flat on the ground (the swizzle) and actively fought the stride. Weight also
-    # softened -5.0 -> -2.0 to leave room for a slightly angled push.
-    cfg.rewards["feet_flat"] = RewardTermCfg(
-        func=microduck_mdp.feet_flat_penalty,
-        weight=-2.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", site_names=("left_foot", "right_foot")),
-            "sensor_name": "feet_ground_contact",
-        },
-    )
-    cfg.rewards["neck_action_rate_l2"] = RewardTermCfg(
-        func=microduck_mdp.neck_action_rate_l2, weight=-0.5
-    )
-    cfg.rewards["neck_joint_pos_l2"] = RewardTermCfg(
-        func=microduck_mdp.neck_joint_pos_l2, weight=-0.5
-    )
     cfg.rewards["joint_torques_l2"] = RewardTermCfg(
         func=microduck_mdp.joint_torques_l2, weight=-1e-3
     )
-    # Deter OVER-COMMANDING a joint past its hard stop (policy-side, transfers via
-    # the ONNX). hip_roll's ±0.38 rad limit vs the ±10 rad ctrlrange let the low-kp
-    # servo be commanded far past the stop and slam it with max torque — a fragile
-    # sim-only trick. This penalises only the COMMAND beyond (limit + 0.3 overshoot),
-    # so the joint keeps its full reachable range (a qpos penalty stole that range
-    # and broke the gait) while the wild over-drive is discouraged.
+    # Deter OVER-COMMANDING a joint past its hard stop: hip_roll's ±0.38 rad
+    # limit vs the ±10 rad ctrlrange let the low-kp servo be commanded far past
+    # the stop and slam it with max torque. This penalises only the COMMAND
+    # beyond (limit + 0.3 overshoot), so the joint keeps its full reachable range.
     cfg.rewards["action_over_limit"] = RewardTermCfg(
         func=microduck_mdp.action_over_limit_penalty,
         weight=-0.5,
         params={"action_name": "joint_pos", "overshoot": 0.3},
     )
-    # Pull hip_roll back toward neutral so the stance stops resting splayed on the
-    # hip_roll limits. L1 = constant gradient: it gently closes the legs AT REST,
-    # but the strong stride rewards (wheel_speed, single_support, air_time) easily
-    # overpower it during an active push → closes the posture WITHOUT preventing
-    # the lateral push stroke. Tune: raise if still splayed, lower if it flattens
-    # the stride. (Physics caveat: if the soft hip_roll servo can't hold a narrow
-    # stance under body weight, the policy will bend knees / lower CoM to unload
-    # it — or, if no stable narrow stance exists, it stays partly splayed.)
-    cfg.rewards["hip_roll_neutral"] = RewardTermCfg(
-        func=microduck_mdp.joint_deviation_l1,
-        weight=-2.0,  # -1.0 -> -2.0: stronger centring pull. Sim already keeps hip_roll
-                      # narrow, but a stronger corrective may help the REAL robot resist
-                      # whatever spreads the legs (deployment/disturbance). Lower if it
-                      # flattens the push.
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=(r".*hip_roll.*",))},
-    )
-    # Sole positive task reward — robot must spin wheels to get anything
-    # vel_scale 0.5 -> 0.3: the tanh target speed. Measured on a trained ckpt, the
-    # policy only reaches ~0.33 m/s at max push, so a 0.5 target sat on the
-    # un-saturated tanh slope and kept pushing it to go faster than it can (over-
-    # reach -> launch instability). 0.3 saturates near the achievable speed, so it
-    # is 'content' there instead of over-driving.
-    cfg.rewards["wheel_speed"] = RewardTermCfg(
-        func=microduck_mdp.wheel_speed_reward,
+
+    # The race itself: speed along the lane, whatever the command, from the
+    # first step (the Arena's settle is a free run-up). At 2.5 m/s it pays
+    # 25/step at the default weight, the bulk of the stack. The knob that set
+    # wheel_speed's weight sets this one.
+    cfg.rewards["forward_speed"] = RewardTermCfg(
+        func=roller_rewards.forward_speed,
         weight=knobs["speed_reward"],
-        params={"command_name": "twist", "vel_scale": 0.3},
+        params={"max_speed": RACE_MAX_SPEED},
     )
-    # Brake: reward stopping when cmd_x < 0. Silent at cmd_x >= 0 (coast/push).
-    cfg.rewards["braking"] = RewardTermCfg(
-        func=microduck_mdp.braking_reward,
-        weight=1.0,
-        params={"command_name": "twist", "vel_std": 0.3},
+
+    # Sideways speed costs (the sprint's race7): off while a stroke is
+    # discovered, ramped in by iter 1000 (curriculum lateral_drift_weight below).
+    # Training has no walls; the Arena's lane is 0.8 m wide.
+    cfg.rewards["lateral_drift"] = RewardTermCfg(
+        func=roller_rewards.lateral_drift,
+        weight=0.0,
     )
-    # Air time during push: pay the recovery-foot lift, but ONLY when the body is
-    # actually moving forward (vel_gate_ref) — otherwise a fast in-place flutter
-    # farmed this. threshold_min raised 0.15 → 0.25 to forbid ultra-short swings
-    # (caps the frantic kick cadence); glide below rewards the slow phase.
-    # air_time rewards each swing → drives swing FREQUENCY; glide rewards staying
-    # on one blade → drives commitment. Balance tilted toward glide (3.0) over
-    # air_time (2.0) because the cadence was still too fast. air_time kept high
-    # enough (2.0) that lifting the foot stays worthwhile.
-    # Calm gait: the aggressive [0.40, 1.00] window forced big long swings ->
-    # violent kicks that tipped the real robot. Back to a gentle [0.15, 0.45]
-    # (small swings allowed, none forced long) and weight 2.0 -> 1.5 so swinging
-    # is less incentivised (lower cadence). glide (below) rewards the coast, so it
-    # pushes only occasionally.
-    cfg.rewards["skating_air_time"] = RewardTermCfg(
-        func=microduck_mdp.skating_air_time_reward,
-        weight=1.5,
-        params={
-            "sensor_name": "feet_ground_contact",
-            "command_name": "twist",
-            "threshold_min": 0.15,
-            "threshold_max": 0.45,
-            "vel_gate_ref": 0.2,
-        },
-    )
-    # Glide phase (single-support REQUIRED, unlike the earlier broken attempt):
-    # reward coasting on one blade with quiet legs so the policy commits to each
-    # stroke instead of kicking frantically. Weight raised 1.5 → 3.0 to actually
-    # out-weigh the swing-frequency pull of air_time.
-    cfg.rewards["glide"] = RewardTermCfg(
-        func=microduck_mdp.glide_reward,
-        weight=4.0,
-        params={
-            "sensor_name": "feet_ground_contact",
-            "command_name": "twist",
-            "vel_ref": 0.2,
-        },
-    )
-    # NOTE: a recover_pose reward (reward default leg pose + quiet + coasting during
-    # the pause) was tried to get "stroke -> recover-to-neutral -> stroke", but
-    # rewarding the SYMMETRIC default posture + dropping single_support's double
-    # penalty re-opened the symmetric swizzle -> reverted. A proper retry must be
-    # PHASE-GATED (reward the neutral only briefly right after a stroke, not
-    # continuously) and keep the double-support penalty.
-    # Single-support stride vs double-support swizzle. Rewards exactly-one-blade-
-    # down and penalises both-down while pushing — the core anti-swizzle signal.
-    # Gated on forward speed too, so stepping that doesn't propel earns nothing.
-    cfg.rewards["single_support"] = RewardTermCfg(
-        func=microduck_mdp.single_support_reward,
-        weight=3.0,
-        params={
-            "sensor_name": "feet_ground_contact",
-            "command_name": "twist",
-            "vel_gate_ref": 0.2,
-        },
-    )
-    # Balance left/right leg usage. With symmetry augmentation OFF nothing stops a
-    # lopsided stride (pushing mostly with one leg) that veers and destabilises,
-    # esp. at launch. Penalises the cumulative swing-time imbalance |L-R|/(L+R);
-    # the instantaneous one-foot-swinging asymmetry of a real stride is fine.
-    cfg.rewards["gait_symmetry"] = RewardTermCfg(
-        func=microduck_mdp.gait_symmetry_penalty,
-        weight=-1.0,
-        params={"sensor_name": "feet_ground_contact"},
-    )
-    # NOTE: a contact_frequency penalty was tried here to slow the cadence, but it
-    # penalises contact CHANGES — minimised by never lifting a foot (the swizzle),
-    # so it pushes toward exactly the gait we fought to leave. Reverted; the
-    # widened air-time window above is the safe cadence-slower (it forbids short
-    # swings without rewarding not-stepping).
-    # Encourage slight forward lean when pushing to counteract backward torque.
-    cfg.rewards["forward_lean"] = RewardTermCfg(
-        func=microduck_mdp.forward_lean_reward,
-        weight=1.5,
-        params={"command_name": "twist", "target_pitch": 0.262, "std": 0.1},
-    )
-    # Heading command DISABLED (straight-line focus), but we hold the heading so it
-    # doesn't drift: heading_hold rewards the yaw ANGLE staying near the spawn
-    # heading. Corrective (allows yaw to steer back) — unlike a yaw-RATE penalty,
-    # which froze the yaw and made drift WORSE (tried and reverted). Re-add real
-    # heading_tracking (turning) once the stride is solid.
+
+    # Skate straight. The Arena commands yaw 0 and never tells the policy its
+    # heading: heading_hold prices the yaw ANGLE against the spawn heading
+    # (corrective, unlike a yaw-rate penalty, which froze the yaw and made
+    # drift worse). The critic sees the heading error (heading_error, below).
+    # std 0.4 -> 0.2, weight 1 -> 2 (the sprint's race8): at 0.2 a 10° turn
+    # keeps 47% (83% at 0.4).
     cfg.rewards["heading_hold"] = RewardTermCfg(
         func=microduck_mdp.heading_hold_reward,
-        weight=1.0,
-        params={"std": 0.4, "asset_cfg": SceneEntityCfg("robot")},
+        weight=2.0,
+        params={"std": 0.2, "asset_cfg": SceneEntityCfg("robot")},
     )
+
+    # Gone with the calm skate: wheel_speed (forward_speed pays the race),
+    # braking (the Arena never brakes), skating_air_time, glide, single_support,
+    # gait_symmetry (the mirror loss balances the legs), forward_lean (the tilt
+    # guard leaves the lean free), com_height_target, feet_flat, hip_roll_neutral
+    # (the leaders swing hip_roll stop to stop) and the neck terms (the leaders
+    # throw the head forward as a counterweight; the Arena never judges it).
 
     # === TERMINATIONS ===
     cfg.terminations["nan_state"] = TerminationTermCfg(
@@ -545,6 +485,8 @@ def make_env_cfg(
         scale=1.0,
         params={"asset_cfg": wheel_cfg},
     )
+    # Privileged too: the heading error heading_hold prices.
+    cfg.observations["critic"].terms["heading_error"] = ObservationTermCfg(func=heading_error)
 
     # Command obs parity with the 61D family layout: head/body slots zero-padded
     # (the roller task drives heading through the twist slot instead).
@@ -562,12 +504,13 @@ def make_env_cfg(
     command.rel_heading_envs = 0.0
     command.heading_command = False  # RelativeHeadingVelocityCommand handles heading internally
     command.ranges.heading = None    # must be None when heading_command=False
-    # cmd_x semantics: 0=coast, >0=push to accelerate, <0=brake to stop. The Arena
-    # sweeps 0.30-2.00 m/s and keeps the best time, but the robot's measured top
-    # push is ~0.6-0.7 (3.10-3.14 s at 0.6-0.7, falling from 0.8 up) -- commanding
-    # above it buys nothing. Training above 0.6 broke learning in two separate
-    # runs, with and without a curriculum widening toward 2.00.
-    command.ranges.lin_vel_x = (-0.5, 0.6)
+    # The ranges are the Arena event's own (arena/events/roller-sprint-2m.toml):
+    # straight ahead, the event's sweep of commanded speeds. forward_speed pays
+    # the same whatever the command, so the policy learns to ignore it, and
+    # every command the sweep tries is one it has seen. History: wheel_speed
+    # grew with the command, and training above 0.6 broke learning twice; the
+    # calm skate's 0.6 top and its braking range (< 0) went with it.
+    command.ranges.lin_vel_x = (0.30, 2.00)
     command.ranges.lin_vel_y = (0.0, 0.0)
     # ang_vel_z range is the clip limit for cmd[2] = heading error (rad).
     # Set to 0 → cmd[2] is always 0 → no turning demand (straight-line focus).
@@ -582,25 +525,24 @@ def make_env_cfg(
     del cfg.curriculum["terrain_levels"]
     del cfg.curriculum["command_vel"]
 
-    # action_rate penalty raised (-0.5/-0.8/-1.0 -> -1.0/-1.5/-2.0) for a CALMER
-    # gait: this is the main "less movement" lever — it penalises fast/large action
-    # changes, so motions become smaller, smoother AND less frequent (rapid
-    # alternation = big action change = penalised). Dial back if it gets sluggish
-    # / can't push enough to move.
-    cfg.curriculum["action_rate_weight"] = CurriculumTermCfg(
+    # The race: a short episode from the stand (see RACE_EPISODE_S).
+    cfg.episode_length_s = RACE_EPISODE_S
+
+    # No action_rate ramp (it reached -2.0 by iter 500 for a calm skate).
+
+    # lateral_drift: off until a stroke exists, then up to -6 (the sprint's race8).
+    cfg.curriculum["lateral_drift_weight"] = CurriculumTermCfg(
         func=microduck_mdp.reward_weight,
         params={
-            "reward_name": "action_rate_l2",
+            "reward_name": "lateral_drift",
             "weight_stages": [
-                {"step": 0, "weight": -1.0},
-                {"step": 250 * 24, "weight": -1.5},
-                {"step": 500 * 24, "weight": -2.0},
+                {"step": 0, "weight": 0.0},
+                {"step": 500 * NUM_STEPS_PER_ENV, "weight": -2.0},
+                {"step": 750 * NUM_STEPS_PER_ENV, "weight": -4.0},
+                {"step": 1000 * NUM_STEPS_PER_ENV, "weight": -6.0},
             ],
         },
     )
-
-    # (heading_tracking_weight curriculum removed — heading is disabled while we
-    # focus on straight-line skating. Re-add together with the reward above.)
 
     # CoM randomization curricula — velocity's ramp, capped lower for the
     # balance-sensitive skating task (audit lesson: ±30 mm forced a nervous
@@ -612,8 +554,8 @@ def make_env_cfg(
                 "event_name": "randomize_com",
                 "range_stages": [
                     {"step": 0,         "range": 0.003},
-                    {"step": 500 * 24,  "range": 0.005},
-                    {"step": 1000 * 24, "range": 0.01},
+                    {"step": 500 * NUM_STEPS_PER_ENV,  "range": 0.005},
+                    {"step": 1000 * NUM_STEPS_PER_ENV, "range": 0.01},
                 ],
             },
         )
@@ -624,8 +566,8 @@ def make_env_cfg(
                 "event_name": "randomize_head_com",
                 "range_stages": [
                     {"step": 0,         "range": 0.003},
-                    {"step": 500 * 24,  "range": 0.005},
-                    {"step": 1000 * 24, "range": 0.01},
+                    {"step": 500 * NUM_STEPS_PER_ENV,  "range": 0.005},
+                    {"step": 1000 * NUM_STEPS_PER_ENV, "range": 0.01},
                 ],
             },
         )
@@ -668,6 +610,6 @@ RL_CFG = RslRlOnPolicyRunnerCfg(
     experiment_name="roller_sprint_2m",  # logs/rsl_rl/roller_sprint_2m/
     run_name="roller_sprint_2m",
     save_interval=250,
-    num_steps_per_env=24,
+    num_steps_per_env=NUM_STEPS_PER_ENV,
     max_iterations=50_000,
 )

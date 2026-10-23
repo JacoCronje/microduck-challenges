@@ -11,7 +11,7 @@ max_iterations = 3000
 seed           = 1
 
 [params.speed_reward]
-label = "Wheel speed reward"
+label = "Speed reward"
 value = 10.0
 min   = 2.0
 max   = 20.0
