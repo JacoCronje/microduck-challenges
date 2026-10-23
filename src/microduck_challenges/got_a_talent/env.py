@@ -220,7 +220,7 @@ def make_env_cfg(
         params={"angle_lo": math.radians(60.0), "angle_hi": math.radians(300.0), "rate_norm": 2.0},
     )
 
-    # Imitation: the reference cartwheel's joint pose at the same point of the turn, 90° to its end.
+    # Imitation: the reference cartwheel's joint pose at the same point of the turn, 90° to 330°.
     # cart1-3 learned the turn but landed leaning on their heads (27° tilt, knees bent); the
     # reference straightens its legs and comes upright on its way out.
     cfg.rewards["reference_pose"] = RewardTermCfg(
@@ -417,10 +417,15 @@ def make_env_cfg(
         func=cartwheel.reset_cartwheel_state,
         mode="reset",
         params={
-            "standing_prob":       0.4,
+            "standing_prob":       0.3,
             "midturn_prob":        0.1,
-            "reference_prob":      0.5,
+            "reference_prob":      0.4,
             "reference":           "cartwheel_reference.npz",
+            # cart2-4 ended their own cartwheels in a head-down tripod (pitched 26° forward, neck at
+            # its limit) and, started there, never stood; started from the reference's landing they
+            # do. So a fifth of the episodes start in those tripods, turn already complete.
+            "stuck_prob":          0.2,
+            "stuck":               "cartwheel_stuck.npz",
             "midturn_range":       (MIDTURN_MIN, MIDTURN_MAX),
             "midturn_omega_range": MIDTURN_OMEGA,
             "spread_overrides":    SPREAD_OVERRIDES,
@@ -523,9 +528,9 @@ def make_env_cfg(
         params={
             "event_name": "set_cartwheel_state",
             "param_stages": [
-                {"step": 0,          "params": {"standing_prob": 0.40, "midturn_prob": 0.10, "reference_prob": 0.50}},
-                {"step": 3000 * 24,  "params": {"standing_prob": 0.50, "midturn_prob": 0.10, "reference_prob": 0.40}},
-                {"step": 6000 * 24,  "params": {"standing_prob": 0.60, "midturn_prob": 0.10, "reference_prob": 0.30}},
+                {"step": 0,          "params": {"standing_prob": 0.30, "midturn_prob": 0.10, "reference_prob": 0.40, "stuck_prob": 0.20}},
+                {"step": 3000 * 24,  "params": {"standing_prob": 0.40, "midturn_prob": 0.10, "reference_prob": 0.30, "stuck_prob": 0.20}},
+                {"step": 6000 * 24,  "params": {"standing_prob": 0.50, "midturn_prob": 0.10, "reference_prob": 0.20, "stuck_prob": 0.20}},
             ],
         },
     )
