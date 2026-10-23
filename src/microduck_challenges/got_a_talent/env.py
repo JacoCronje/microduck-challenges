@@ -17,7 +17,8 @@ What the roulade taught, kept here:
   • landing rewards gated on COMPLETION (and on the head latch), never on a clock, so standing at
     the spawn cannot farm them and no upright pressure opposes the turn;
   • a stand tax after completion, so lying in a heap afterwards is never free;
-  • reverse curriculum: half the episodes start part-way round with the turn's momentum;
+  • reverse curriculum: episodes also start part-way round, most of them at a moment of a reference
+    cartwheel that lands standing (cartwheel_reference.npz, searched in the Arena's own physics);
   • motion-blocking regularisers near zero until the skill exists, introduced late by curriculum.
 """
 
@@ -398,14 +399,19 @@ def make_env_cfg(
     cfg.events["foot_friction"].params["asset_cfg"].geom_names = foot_frictions_geom_names
     cfg.events["foot_friction"].params["ranges"] = (0.7, 1.3)
 
-    # Standing start, or part-way round (reverse curriculum). Must run after reset_robot_joints
-    # (dict insertion order): the spread lerps FROM the HOME pose it wrote.
+    # Standing start, part-way round (reverse curriculum), or a moment of the reference cartwheel
+    # (cartwheel_reference.npz: a cartwheel that lands standing, found by searching the Arena's own
+    # physics, logs/cartwheel/search.py). cart1 and cart2 learned the turn but never found a way
+    # back onto their feet; starts along the reference's landing show them one. Must run after
+    # reset_robot_joints (dict insertion order): the spread lerps FROM the HOME pose it wrote.
     cfg.events["set_cartwheel_state"] = EventTermCfg(
         func=cartwheel.reset_cartwheel_state,
         mode="reset",
         params={
-            "standing_prob":       0.5,
-            "midturn_prob":        0.5,
+            "standing_prob":       0.4,
+            "midturn_prob":        0.1,
+            "reference_prob":      0.5,
+            "reference":           "cartwheel_reference.npz",
             "midturn_range":       (MIDTURN_MIN, MIDTURN_MAX),
             "midturn_omega_range": MIDTURN_OMEGA,
             "spread_overrides":    SPREAD_OVERRIDES,
@@ -508,9 +514,9 @@ def make_env_cfg(
         params={
             "event_name": "set_cartwheel_state",
             "param_stages": [
-                {"step": 0,          "params": {"standing_prob": 0.50, "midturn_prob": 0.50}},
-                {"step": 3000 * 24,  "params": {"standing_prob": 0.65, "midturn_prob": 0.35}},
-                {"step": 6000 * 24,  "params": {"standing_prob": 0.80, "midturn_prob": 0.20}},
+                {"step": 0,          "params": {"standing_prob": 0.40, "midturn_prob": 0.10, "reference_prob": 0.50}},
+                {"step": 3000 * 24,  "params": {"standing_prob": 0.50, "midturn_prob": 0.10, "reference_prob": 0.40}},
+                {"step": 6000 * 24,  "params": {"standing_prob": 0.60, "midturn_prob": 0.10, "reference_prob": 0.30}},
             ],
         },
     )

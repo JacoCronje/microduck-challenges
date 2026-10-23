@@ -26,6 +26,7 @@ so training one direction trains the other.
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -35,6 +36,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.tasks.velocity.mdp.velocity_command import UniformVelocityCommand, UniformVelocityCommandCfg
 
 from mjlab_microduck.tasks import mdp as microduck_mdp
+from mjlab_microduck.tasks.symmetry import _JOINT_PERM, _JOINT_SIGN
 
 _ASSET = SceneEntityCfg("robot")
 COMMAND = "twist"
@@ -186,6 +188,25 @@ def _height(env: ManagerBasedRlEnv, asset: Entity) -> torch.Tensor:
 
 
 # ── Spawns ─────────────────────────────────────────────────────────────────────────────────────
+_REFERENCES: dict = {}
+
+
+def _reference(name: str, device) -> dict:
+    """A cartwheel found by searching the Arena's physics (logs/cartwheel/make_reference.py): every
+    control step's full state, and the turn frontier, from the step it passed 30° to half a second
+    after it stood up."""
+    key = (name, str(device))
+    if key not in _REFERENCES:
+        data = np.load(Path(__file__).with_name(name))
+        ref = {k: torch.tensor(data[k], device=device)
+               for k in ("qpos_free", "qvel_free", "joint_pos", "joint_vel", "frontier")}
+        first = int(np.argmax(data["frontier"] >= math.radians(30.0)))
+        last = min(int(data["landed"]) + round(0.5 / float(data["dt"])), len(data["frontier"]) - 1)
+        ref["frames"] = torch.arange(first, last + 1, device=device)
+        _REFERENCES[key] = ref
+    return _REFERENCES[key]
+
+
 def reset_cartwheel_state(
     env: ManagerBasedRlEnv,
     env_ids: torch.Tensor,
@@ -198,14 +219,21 @@ def reset_cartwheel_state(
     spread_overrides: dict | None = None,
     spread_range: tuple = (0.0, 1.0),
     joint_noise_std: float = 0.08,
+    reference_prob: float = 0.0,
+    reference: str = "cartwheel_reference.npz",
     asset_cfg: SceneEntityCfg = _ASSET,
 ):
-    """A standing start (the trigger to come), or a start part-way round the turn.
+    """A standing start (the trigger to come), a start part-way round the turn, or a start at a
+    moment of the reference cartwheel.
 
     Part-way: turned θ in midturn_range about body x in the episode's direction, random yaw,
     legs lerped HOME→spread by a random factor plus joint noise, trunk just clear of the floor
     (SPAWN_Z_TABLE + 8 mm), turning at ω in midturn_omega_range; its pulse is marked long gone,
     the turn frontier starts at θ and the head latch is set (it teaches finishing, not the headstand).
+    From the reference: its exact state at a random step between 30° of turn and half a second
+    after it stood (joints, trunk pose, both velocities), mirrored for a right cartwheel, turned to
+    a random heading; its frontier is the reference's and the head latch is set past 180°. It shows
+    the policy a way to stand up after the turn that its own exploration had not found.
     Draws the episode's direction and hands it to the command (which resets after this event);
     runs after reset_robot_joints (the spread lerps from the HOME pose it wrote)."""
     if env_ids is None or len(env_ids) == 0:
@@ -218,10 +246,12 @@ def reset_cartwheel_state(
     trig = _trigger(env)
     direction = torch.where(torch.rand(n, device=dev) < 0.5, 1.0, -1.0)
 
-    mid = torch.rand(n, device=dev) < midturn_prob / max(standing_prob + midturn_prob, 1e-6)
+    draw = torch.rand(n, device=dev) * max(standing_prob + midturn_prob + reference_prob, 1e-6)
+    mid = draw < midturn_prob
+    from_ref = (draw >= midturn_prob) & (draw < midturn_prob + reference_prob)
     trig.preset[env_ids] = True
     trig.preset_direction[env_ids] = direction
-    trig.preset_gone[env_ids] = mid
+    trig.preset_gone[env_ids] = mid | from_ref
     theta = torch.rand(n, device=dev) * (midturn_range[1] - midturn_range[0]) + midturn_range[0]
     theta = torch.where(mid, theta, torch.zeros_like(theta))
 
@@ -264,10 +294,45 @@ def reset_cartwheel_state(
         # Free-joint qvel[3:6] is the body-frame angular velocity: turn about body x.
         env.sim.data.qvel[mid_ids, 3] = -direction[mid] * (omega + midturn_omega_range[0])
 
+    latch = mid.clone()
+    ref_ids = env_ids[from_ref]
+    if len(ref_ids):
+        ref = _reference(reference, dev)
+        k = ref["frames"][torch.randint(len(ref["frames"]), (len(ref_ids),), device=dev)]
+        free, vel = ref["qpos_free"][k], ref["qvel_free"][k]
+        joints, joint_vel = ref["joint_pos"][k], ref["joint_vel"][k]
+        # The reference turns left; a right cartwheel is its mirror image.
+        right = (direction[from_ref] < 0).unsqueeze(1)
+        perm = torch.tensor(_JOINT_PERM, device=dev)
+        sign = torch.tensor(_JOINT_SIGN, device=dev)
+        joints = torch.where(right, joints[:, perm] * sign, joints)
+        joint_vel = torch.where(right, joint_vel[:, perm] * sign, joint_vel)
+        flip3 = torch.tensor([1.0, -1.0, 1.0], device=dev)
+        q = torch.where(right, free[:, 3:7] * torch.tensor([1.0, -1.0, 1.0, -1.0], device=dev), free[:, 3:7])
+        lin = torch.where(right, vel[:, 0:3] * flip3, vel[:, 0:3])
+        ang = torch.where(right, vel[:, 3:6] * -flip3, vel[:, 3:6])
+        # A random heading: turn the pose and the world-frame velocity about z.
+        psi = yaw[from_ref]
+        c, s_ = torch.cos(psi / 2), torch.sin(psi / 2)
+        qw, qx, qy, qz = q.unbind(1)
+        q = torch.stack([c * qw - s_ * qz, c * qx - s_ * qy, c * qy + s_ * qx, c * qz + s_ * qw], dim=1)
+        cp_, sp_ = torch.cos(psi), torch.sin(psi)
+        lin = torch.stack([cp_ * lin[:, 0] - sp_ * lin[:, 1], sp_ * lin[:, 0] + cp_ * lin[:, 1], lin[:, 2]], dim=1)
+        env.sim.data.qpos[ref_ids, 2] = free[:, 2] + microduck_mdp._env_origin_z(env, ref_ids)
+        env.sim.data.qpos[ref_ids, 3:7] = q
+        env.sim.data.qvel[ref_ids, 0:3] = lin
+        env.sim.data.qvel[ref_ids, 3:6] = ang
+        servo = microduck_mdp._servo_joint_ids(env, asset)
+        for j in range(14):
+            env.sim.data.qpos[ref_ids, 7 + servo[j]] = joints[:, j]
+            env.sim.data.qvel[ref_ids, 6 + servo[j]] = joint_vel[:, j]
+        theta[from_ref] = ref["frontier"][k]
+        latch[from_ref] = ref["frontier"][k] >= math.pi
+
     accum[env_ids] = theta
     frontier[env_ids] = theta
     paid[env_ids] = theta
-    env._cw_latch[env_ids] = mid
+    env._cw_latch[env_ids] = latch
 
 
 # ── Rewards ────────────────────────────────────────────────────────────────────────────────────
