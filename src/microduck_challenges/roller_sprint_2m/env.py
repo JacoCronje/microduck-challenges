@@ -256,10 +256,12 @@ def make_env_cfg(
     cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("trunk_base",)
     cfg.rewards["body_ang_vel"].weight = -0.05
     cfg.rewards["angular_momentum"].weight = -0.02
-    # Action smoothness held at -0.1 (the sprint's race value; was -1.0 ramped to
-    # -2.0 for a calm skate). The sprint's race4 tried -0.02 from scratch: a
-    # jittery gait, 3x the falls.
-    cfg.rewards["action_rate_l2"].weight = -0.1
+    # Action smoothness (was -1.0 ramped to -2.0 for a calm skate). race1-2 held
+    # the sprint's -0.1: it cost 2.85 per episode against forward_speed's 5.17,
+    # and the leaders move their joints 50% faster (4.7-5.2 rad/s against 3.1).
+    # race3: -0.05, fine-tuning a working stroke. The sprint's race4 tried -0.02
+    # from scratch: a jittery gait, 3x the falls.
+    cfg.rewards["action_rate_l2"].weight = -0.05
 
     cfg.rewards["self_collisions"] = RewardTermCfg(
         func=mdp.self_collision_cost,
