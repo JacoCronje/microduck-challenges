@@ -1,5 +1,25 @@
 # AGENTS.md: MicroDuck Got a Talent
 
+> **On the `cartwheel` branch this folder trains a different talent**: the duck stands until the
+> timeline pulses `twist[1]` (+1 for 0.5 s: a cartwheel to its left, -1: to its right), turns a
+> cartwheel over its head and stands again. `env.py`, `rewards.py`, `check.py`, `timeline.json`,
+> `challenge.toml` (knobs `idle_reward`, `turn_reward`, `landing_reward`; 1536 envs) and the talent
+> tests describe that; the sit/stand text below is the `got-a-talent` branch's. What the runs taught
+> (cart1-cart5, commits on the branch):
+>
+> - The roulade recipe turned about the forward axis finds the turn on its own (cart1, ~iteration 500).
+> - It then lands in a head-down tripod (pitched ~26°, neck at its limit) and never stands: adding
+>   the head to the landing pose (cart2), reference-state starts (cart3) and pose tracking (cart4)
+>   did not fix it. Starting a fifth of the episodes in those exact stuck tripods did (cart5: every
+>   checkpoint from 250 iterations in passes 60/60 cartwheels on 20 seeds).
+> - `cartwheel_reference.npz` is a cartwheel searched open-loop in the Arena's physics
+>   (logs/cartwheel/search.py on the user's machine); `cartwheel_stuck.npz` the stuck tripods.
+> - Tracking indexed by turn angle only works while the turn advances: the rise happens at an
+>   almost constant angle, so tracking stops at 330°.
+> - Before blaming exploration, start the policy from the states you want it to reach (a probe in
+>   the training env): cart4 stood from the reference's landing, so the rewards were right.
+> - The Arena's fall rule always fires mid-cartwheel (upside down): a label, not a failure.
+
 You are helping a user prepare a Microduck performance for the Arena's **MicroDuck Got a Talent**
 (event `got-a-talent`, task `Mjlab-GotATalent-MicroDuck`, this folder). The user may be new to
 reinforcement learning. Work so that it stays:
