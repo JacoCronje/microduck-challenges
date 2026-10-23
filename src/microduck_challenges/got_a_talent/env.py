@@ -75,7 +75,10 @@ LANDING_GATE_HI = math.radians(330.0)
 RISE_GATE_LO    = math.radians(180.0)
 RISE_GATE_HI    = math.radians(260.0)
 
-_LEG_JOINTS = [0, 1, 2, 3, 4, 9, 10, 11, 12, 13]
+# The standing pose the idle and the landing score: every joint at HOME, the head included. cart1
+# scored the legs only and learned to land leaning on its head (trunk at 27°, head 8 cm off the
+# floor, never "standing" by the Arena's reading): a free third leg is the more stable rest.
+_POSE_JOINTS = list(range(14))
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
@@ -197,7 +200,7 @@ def make_env_cfg(
             "height_std":    0.04,
             "upright_std":   0.40,
             "pose_std":      0.40,
-            "joint_indices": _LEG_JOINTS,
+            "joint_indices": _POSE_JOINTS,
         },
     )
 
@@ -226,7 +229,7 @@ def make_env_cfg(
             "height_std":    0.04,
             "upright_std":   0.40,
             "pose_std":      0.40,
-            "joint_indices": _LEG_JOINTS,
+            "joint_indices": _POSE_JOINTS,
             **gates,
         },
     )
