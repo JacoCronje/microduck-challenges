@@ -55,7 +55,10 @@ ENABLE_MASS_INERTIA_RANDOMIZATION    = True
 ENABLE_JOINT_FRICTION_RANDOMIZATION  = True   # BAM friction budget per-env (legs)
 ENABLE_ARMATURE_RANDOMIZATION        = True   # legs only — NOT the wheel bearings
 ENABLE_VELOCITY_PUSHES               = False  # the Arena races without pushes; a 3 s race has no room to recover
-ENABLE_IMU_ORIENTATION_RANDOMIZATION = True   # obs-level per-env rotation
+# race2: off. The Arena's IMU is mounted true; a random 6° misalignment hid the
+# trunk's pitch from the policy by as much, and race1 leaned 5-8° where the
+# leaders lean 15-20°.
+ENABLE_IMU_ORIENTATION_RANDOMIZATION = False  # obs-level per-env rotation
 ENABLE_ENCODER_BIAS                  = True
 
 # ── Ranges (matched to the velocity env unless roller-specific) ───────────────
