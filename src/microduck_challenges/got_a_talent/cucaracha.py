@@ -23,6 +23,9 @@ DURATION = 20.0
 # Where the sprinter starts (x, y, yaw) and where it lies after its wipe-out, read off the simulation.
 CRASHER_START = (1.0, 1.6, -60)
 CRASH_AT = (1.6, -0.3)
+# The chorus's start heading: talent1 checkpoint 2750 turns about 14° to its right while it settles,
+# so it starts turned the other way to face the audience.
+CHORUS_YAW = 10
 
 # The beat: 3/4, a quarter 0.4 s, a bar 1.2 s; bar downbeats at 3.6 + 1.2 k.
 Q = 0.4
@@ -106,11 +109,11 @@ def aim(duck, x, y):
 
 def build():
     # ---------------------------------------------------------------- the cast
-    star = Duck("self", 0.55, 0.0, -5, {"brightness": 0.6, "vibrato": 0.45, "pitch": 0.6})
-    in_l = Duck("self", 0.20, -0.50, -5, {"pitch": 0.45, "vibrato": 0.2})
-    in_r = Duck("self", 0.20, +0.50, -5, {"pitch": 0.5, "vibrato": 0.2})
-    out_l = Duck("self", -0.15, -0.95, -5, {"pitch": 0.15, "buzz": 0.7, "brightness": 0.2})
-    out_r = Duck("self", -0.15, +0.95, -5, {"pitch": 0.3, "buzz": 0.6})
+    star = Duck("self", 0.55, 0.0, CHORUS_YAW, {"brightness": 0.6, "vibrato": 0.45, "pitch": 0.6})
+    in_l = Duck("self", 0.20, -0.50, CHORUS_YAW, {"pitch": 0.45, "vibrato": 0.2})
+    in_r = Duck("self", 0.20, +0.50, CHORUS_YAW, {"pitch": 0.5, "vibrato": 0.2})
+    out_l = Duck("self", -0.15, -0.95, CHORUS_YAW, {"pitch": 0.15, "buzz": 0.7, "brightness": 0.2})
+    out_r = Duck("self", -0.15, +0.95, CHORUS_YAW, {"pitch": 0.3, "buzz": 0.6})
     walk_l = Duck(SPRINT_REF, -0.95, -1.45, 10, {"pitch": 0.8})
     walk_r = Duck(SPRINT_REF, -0.95, +1.50, 10, {"pitch": 0.75})
     crasher = Duck(RACE9, *CRASHER_START, {"pitch": 0.95, "vibrato": 0.9})
