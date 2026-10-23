@@ -62,7 +62,7 @@ ENABLE_IMU_ORIENTATION_RANDOMIZATION = False  # obs-level per-env rotation
 ENABLE_ENCODER_BIAS                  = True
 
 # ── Ranges (matched to the velocity env unless roller-specific) ───────────────
-COM_RANDOMIZATION_RANGE          = 0.003   # ±3mm, held (race4; was ramped to ±10mm)
+COM_RANDOMIZATION_RANGE          = 0.003   # ±3mm initial, ramped via curriculum
 HEAD_COM_RANDOMIZATION_RANGE     = 0.003
 MASS_INERTIA_RANDOMIZATION_RANGE = (0.95, 1.05)
 JOINT_FRICTION_RANDOMIZATION_RANGE = (0.9, 1.1)
@@ -312,6 +312,22 @@ def make_env_cfg(
         params={"std": 0.2, "asset_cfg": SceneEntityCfg("robot")},
     )
 
+    # Lean into the push (race5): pays how far the CoM leads the skates per unit
+    # of its height (capped at 0.6, the leaders' best), in proportion to speed up
+    # to 1.5 m/s, so a standing snowplow lean earns nothing. race1-4 carried the
+    # CoM 2.6 cm ahead at 11.2 cm (0.23); the leaders 0.44-0.62, which holds
+    # about twice the push. At 0.6 and full speed it pays 3/s at weight 5,
+    # a fifth of forward_speed's 15/s.
+    cfg.rewards["lean_drive"] = RewardTermCfg(
+        func=roller_rewards.lean_drive,
+        weight=5.0,
+        params={
+            "max_ratio": 0.6,
+            "full_speed": 1.5,
+            "asset_cfg": SceneEntityCfg("robot", body_names=(r"^tire(_\d)?$",)),
+        },
+    )
+
     # Gone with the calm skate: wheel_speed (forward_speed pays the race),
     # braking (the Arena never brakes), skating_air_time, glide, single_support,
     # gait_symmetry (the mirror loss balances the legs), forward_lean (the tilt
@@ -550,10 +566,35 @@ def make_env_cfg(
         },
     )
 
-    # No CoM randomization curricula since race4: the trunk and head CoM stay at
-    # ±3 mm (COM_RANDOMIZATION_RANGE). The velocity env's ramp widened them to
-    # ±10 mm by iteration 1000, where race1's episode length fell 90 -> 79 and
-    # never came back; the Arena simulates the nominal CoM.
+    # CoM randomization curricula — velocity's ramp, capped lower for the
+    # balance-sensitive skating task (audit lesson: ±30 mm forced a nervous
+    # gait on the walker; skates are even less forgiving). race4 held them at
+    # ±3 mm: training got easier (episode length 92 -> 100), the Arena slower
+    # (1.36 -> 1.38-1.42 s); stopped and reverted.
+    if ENABLE_COM_RANDOMIZATION:
+        cfg.curriculum["com_range"] = CurriculumTermCfg(
+            func=microduck_mdp.com_range_curriculum,
+            params={
+                "event_name": "randomize_com",
+                "range_stages": [
+                    {"step": 0,         "range": 0.003},
+                    {"step": 500 * NUM_STEPS_PER_ENV,  "range": 0.005},
+                    {"step": 1000 * NUM_STEPS_PER_ENV, "range": 0.01},
+                ],
+            },
+        )
+    if ENABLE_HEAD_COM_RANDOMIZATION:
+        cfg.curriculum["head_com_range"] = CurriculumTermCfg(
+            func=microduck_mdp.com_range_curriculum,
+            params={
+                "event_name": "randomize_head_com",
+                "range_stages": [
+                    {"step": 0,         "range": 0.003},
+                    {"step": 500 * NUM_STEPS_PER_ENV,  "range": 0.005},
+                    {"step": 1000 * NUM_STEPS_PER_ENV, "range": 0.01},
+                ],
+            },
+        )
 
     return cfg
 

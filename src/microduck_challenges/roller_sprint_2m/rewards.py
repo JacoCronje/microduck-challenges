@@ -90,3 +90,33 @@ def tilt_guard(
     back_guard = ((back_zero_deg - back) / (back_zero_deg - back_free_deg)).clamp(0.0, 1.0)
     return torch.minimum(guard, back_guard)
 
+
+
+def lean_drive(
+    env: ManagerBasedRlEnv,
+    max_ratio: float,
+    full_speed: float,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """How far the centre of mass leads the skates, per unit of its height, while skating fast.
+
+    A skate's push is a forward force at the wheels, under the centre of mass:
+    it pitches the duck back unless the CoM leads the wheels, and the push it
+    can hold is about g x (CoM ahead / CoM height). On the Arena, the leaders
+    (0.96-1.29 s) carry the CoM 4.2-4.8 cm ahead at 7.7-9.6 cm height (ratio
+    0.44-0.62), race2 2.6 cm at 11.2 cm (0.23), the reference 0.4 cm (0.04).
+
+    The ratio is capped at max_ratio, and paid in proportion to the speed along
+    the lane up to full_speed: a duck standing in a snowplow lean earns nothing,
+    and at speed a forward lean only holds while the skates push. asset_cfg's
+    body_names are the wheels.
+    """
+    asset = env.scene[asset_cfg.name]
+    lane = _race_direction(env, asset)
+    com = asset.data.data.subtree_com[:, asset.data.indexing.root_body_id]  # whole robot, world
+    wheels = asset.data.body_link_pos_w[:, asset_cfg.body_ids].mean(1)
+    ahead = ((com[:, :2] - wheels[:, :2]) * lane).sum(-1)
+    height = (com[:, 2] - wheels[:, 2]).clamp(min=0.02)
+    along = (asset.data.root_link_lin_vel_w[:, :2] * lane).sum(-1)
+    ratio = torch.nan_to_num(ahead / height, nan=0.0).clamp(0.0, max_ratio)
+    return ratio * (along / full_speed).clamp(0.0, 1.0)
