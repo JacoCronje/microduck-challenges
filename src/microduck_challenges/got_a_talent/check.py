@@ -1,22 +1,19 @@
-"""Does a MicroDuck Got a Talent policy perform its timeline on the Arena's stage?
+"""Does a MicroDuck Got a Talent policy cartwheel on its timeline's pulses on the Arena's stage?
 
     uv run --frozen --group workshop python -m microduck_challenges.got_a_talent.check policy.onnx [--timeline FILE]
 
-Plays the stage the way the Arena scores an entry (arena.evaluate, with this
-folder's timeline.json by default; for a troupe, the star alone on its own
-keyframes, since the other ducks are other policies), then checks the
-performance against the star's timeline, keyframe by keyframe:
+Plays the stage the way the Arena scores an entry (arena.evaluate, with this folder's timeline.json
+by default; for a troupe, the star alone on its own keyframes, since the other ducks are other
+policies), then checks the performance against the star's pulses, twist[1] = +1 (a cartwheel to its
+left) or -1 (to its right):
 
-- no fall, by the event's own rule;
-- at the start, and after each change of the sit flag (twist.vx): seated
-  within 1.5 s when it is now 1, or standing upright within 1.5 s when it is
-  now 0, and held until the flag changes again;
-- every keyframe held 2 s or more: each head joint within 0.25 rad of the
-  default pose plus the keyframe's head command, over the hold's last 0.5 s.
+- before the first pulse: standing throughout;
+- after each pulse: turned at least TURN_DEG about its forward axis in the pulse's direction, and
+  standing again within RISE_S of the pulse, held until the next pulse (or the end).
 
-Seated and standing are the Arena's own readings (arena.stage). Prints a line
-per keyframe; exits 1 when anything fails, including a performance that did
-not play to the end.
+Standing is the Arena's own reading (arena.stage). The event's fall rule fires during any cartwheel
+(the duck is upside down), so a fall is reported but only the standing afterwards decides. Prints a
+line per pulse; exits 1 when anything fails, including a performance that did not play to the end.
 """
 
 import argparse
@@ -25,8 +22,8 @@ from pathlib import Path
 
 import numpy as np
 from arena import stage
-from arena.constants import CTRL_DT, DEFAULT_POSE, JOINT_NAMES
 from arena.cast import cast_of
+from arena.constants import CTRL_DT
 from arena.evaluate import evaluate
 from arena.manifest import load_event
 from arena.policy import PolicyError, load_policy
@@ -34,11 +31,8 @@ from arena.timeline import Timeline, TimelineError, load_troupe, solo
 
 EVENT = "got-a-talent"
 TIMELINE = Path(__file__).with_name("timeline.json")
-REACH_S = 1.5
-HEAD_HOLD_S = 2.0
-HEAD_WINDOW_S = 0.5
-HEAD_TOLERANCE_RAD = 0.25
-HEAD_JOINTS = [JOINT_NAMES.index(n) for n in ("neck_pitch", "head_pitch", "head_yaw", "head_roll")]
+TURN_DEG = 330.0
+RISE_S = 5.0
 
 
 def _frames(start_s: float, end_s: float) -> slice:
@@ -46,67 +40,84 @@ def _frames(start_s: float, end_s: float) -> slice:
     return slice(round(start_s / CTRL_DT), round(end_s / CTRL_DT))
 
 
-def _flag_segments(timeline: Timeline) -> list[tuple[float, float, bool]]:
-    """(start, end, sit) for each stretch where the sit flag keeps one value."""
-    segments: list[tuple[float, float, bool]] = []
+def pulses(timeline: Timeline) -> list[tuple[float, float]]:
+    """(time, direction) of each pulse: where twist[1] turns non-zero."""
+    out, before = [], 0.0
     for t, command in zip(timeline.times, timeline.commands):
-        sit = command[0] >= 0.5
-        if segments and segments[-1][2] == sit:
+        if command[1] and not before:
+            out.append((t, float(np.sign(command[1]))))
+        before = command[1]
+    return out
+
+
+def turn_about_forward(trace) -> np.ndarray:
+    """Cumulative rotation (rad) about the trunk's own forward axis, frame by frame; a cartwheel to
+    the left is negative."""
+    q = trace[:, 3:7].astype(np.float64)
+    w0, v0 = q[:-1, 0], q[:-1, 1:]
+    w1, v1 = q[1:, 0], q[1:, 1:]
+    # r = conj(q0) ⊗ q1: the step's rotation in the body frame.
+    w = w0 * w1 + (v0 * v1).sum(axis=1)
+    v = w0[:, None] * v1 - w1[:, None] * v0 - np.cross(v0, v1)
+    v = np.where(w[:, None] < 0, -v, v)
+    w = np.abs(w)
+    norm = np.linalg.norm(v, axis=1)
+    angle = 2.0 * np.arctan2(norm, w)
+    step_x = np.where(norm > 1e-12, angle * v[:, 0] / np.maximum(norm, 1e-12), 0.0)
+    return np.concatenate([[0.0], np.cumsum(step_x)])
+
+
+def report(trace, timeline: Timeline, termination) -> tuple[list[str], bool, int]:
+    """A line per stretch then the fall line, whether everything passed, and the turns completed."""
+    standing = stage.standing(trace)
+    turn = turn_about_forward(trace)
+    marks = pulses(timeline)
+    ends = [t for t, _ in marks[1:]] + [timeline.duration_s]
+    lines, passed, done = [], True, 0
+
+    first = marks[0][0] if marks else timeline.duration_s
+    still = standing[_frames(0.0, first)]
+    if still.all():
+        lines.append(f"t= 0.00  stand: held until {first:.2f} s")
+    else:
+        left = int(np.argmin(still)) * CTRL_DT
+        lines.append(f"t= 0.00  stand: left at {left:.2f} s, before any pulse")
+        passed = False
+
+    for (t, direction), end in zip(marks, ends):
+        name = "left" if direction > 0 else "right"
+        window = _frames(t, min(t + RISE_S, end))
+        start = round(t / CTRL_DT)
+        turned = -direction * (turn[window] - turn[start])
+        reached = np.nonzero(turned >= np.radians(TURN_DEG))[0]
+        best = float(np.degrees(turned.max())) + 0.0 if len(turned) else 0.0  # + 0.0: never "-0°"
+        if not len(reached):
+            lines.append(f"t={t:5.2f}  {name}: turned {best:.0f}°, not the {TURN_DEG:.0f}° of a cartwheel")
+            passed = False
             continue
-        if segments:
-            segments[-1] = (segments[-1][0], t, segments[-1][2])
-        segments.append((t, timeline.duration_s, sit))
-    return segments
-
-
-def _posture(trace, start_s: float, end_s: float, sit: bool) -> tuple[str, bool]:
-    name = "sit" if sit else "stand"
-    window = (stage.seated(trace) if sit else stage.standing(trace))[_frames(start_s, end_s)]
-    reach = window[: round(REACH_S / CTRL_DT)]
-    if not reach.any():
-        return f"{name}: not reached within {REACH_S:g} s", False
-    first = int(np.argmax(reach))
-    if not window[first:].all():
-        left = start_s + (first + int(np.argmin(window[first:]))) * CTRL_DT
-        return f"{name}: reached after {first * CTRL_DT:.2f} s, left at {left:.2f} s", False
-    return f"{name}: reached after {first * CTRL_DT:.2f} s, held until {end_s:.2f} s", True
-
-
-def _head(trace, command, start_s: float, end_s: float) -> tuple[str, bool, float]:
-    if end_s - start_s < HEAD_HOLD_S:
-        return f"head: held under {HEAD_HOLD_S:g} s, not checked", True, 0.0
-    angles = trace[_frames(end_s - HEAD_WINDOW_S, end_s)][:, [7 + j for j in HEAD_JOINTS]]
-    if not len(angles):
-        return "head: the performance ended before this hold", False, float("inf")
-    target = DEFAULT_POSE[HEAD_JOINTS] + np.asarray(command[3:7])
-    worst = float(np.abs(angles.mean(axis=0) - target).max())
-    return f"head: off by {worst:.2f} rad", worst <= HEAD_TOLERANCE_RAD, worst
-
-
-def report(trace, timeline: Timeline, termination) -> tuple[list[str], bool, float]:
-    """A line per keyframe then the fall line, whether everything passed, and the largest head error."""
-    starts = {start: (end, sit) for start, end, sit in _flag_segments(timeline)}
-    ends = list(timeline.times[1:]) + [timeline.duration_s]
-    lines, passed, head_error = [], True, 0.0
-    for t, command, end in zip(timeline.times, timeline.commands, ends):
-        parts = []
-        if t in starts:
-            text, ok = _posture(trace, t, *starts[t])
-            parts.append(text)
-            passed &= ok
-        text, ok, worst = _head(trace, command, t, end)
-        parts.append(text)
-        passed &= ok
-        head_error = max(head_error, worst)
-        lines.append(f"t={t:5.2f}  " + "; ".join(parts))
+        after = start + int(reached[0])
+        up = standing[after:window.stop]
+        if not up.any():
+            lines.append(f"t={t:5.2f}  {name}: turned {best:.0f}°, not standing again within {RISE_S:g} s")
+            passed = False
+            continue
+        stood = after + int(np.argmax(up))
+        rest = standing[stood:round(end / CTRL_DT)]
+        if not rest.all():
+            left = (stood + int(np.argmin(rest))) * CTRL_DT
+            lines.append(f"t={t:5.2f}  {name}: turned {best:.0f}°, standing after {stood * CTRL_DT - t:.2f} s, left at {left:.2f} s")
+            passed = False
+            continue
+        done += 1
+        lines.append(f"t={t:5.2f}  {name}: turned {best:.0f}°, standing after {stood * CTRL_DT - t:.2f} s, held until {end:.2f} s")
     fell = stage.fell_at(trace, termination)
-    lines.append("no fall" if fell is None else f"fell at {fell:.2f} s")
-    return lines, passed and fell is None, head_error
+    lines.append("no fall" if fell is None else f"fall rule first held at {fell:.2f} s (upside down mid-turn is expected)")
+    return lines, passed, done
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Check a MicroDuck Got a Talent policy's performance on the Arena's stage.")
+        description="Check a MicroDuck Got a Talent policy's cartwheels on the Arena's stage.")
     parser.add_argument("onnx")
     parser.add_argument("--timeline", default=str(TIMELINE))
     args = parser.parse_args(argv)
@@ -119,10 +130,10 @@ def main(argv=None) -> int:
     except (TimelineError, PolicyError) as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
-    lines, passed, head_error = report(result.trace[0], timeline, event.termination)
+    lines, passed, done = report(result.trace[0], timeline, event.termination)
     passed = passed and result.seeds_finished == 1
     print("\n".join(lines))
-    print(f"{'PASS' if passed else 'FAIL'}: largest head error {head_error:.2f} rad")
+    print(f"{'PASS' if passed else 'FAIL'}: {done}/{len(pulses(timeline))} cartwheels")
     return 0 if passed else 1
 
 

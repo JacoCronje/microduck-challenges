@@ -1,5 +1,5 @@
 # MicroDuck Got a Talent: a 20 s performance on a stage. The Arena plays your
-# timeline.json (when to sit, when to stand, where to look); visitors vote.
+# timeline.json (when to cartwheel, and which way); visitors vote.
 # Nothing is timed. Make the moves yours.
 event = "got-a-talent"
 task  = "Mjlab-GotATalent-MicroDuck"
@@ -7,28 +7,28 @@ kind  = "perpetual"
 
 # What the policy reads in each command group: publish writes it in the manifest.
 [command]
-twist = "[sit flag: 1 sit, 0 stand; unused; unused]"
-head  = "[neck_pitch, head_pitch, head_yaw, head_roll]: rad from the default pose"
+twist = "[0, cartwheel trigger: +1 for 0.5 s cartwheels to its left, -1 to its right, 0 stands; 0]"
+head  = "unused (zeros)"
 
 [recipe]                  # the first training, as is
-num_envs       = 1536
-max_iterations = 3000
+num_envs       = 1536     # the most an 8 GB GPU holds with this env's contact buffer
+max_iterations = 6000
 seed           = 1
 
-[params.head_reward]
-label = "Follow the head moves"
-value = 0.75
+[params.idle_reward]
+label = "Stand still until told"
+value = 4.0
 min   = 0.0
-max   = 2.0
+max   = 8.0
 
-[params.stillness_reward]
-label = "Hold still between moves"
-value = 2.0
-min   = 0.0
-max   = 4.0
+[params.turn_reward]
+label = "Turn the cartwheel"
+value = 8.0
+min   = 2.0
+max   = 16.0
 
-[params.upright_reward]
-label = "Stay upright"
-value = 2.5
-min   = 0.5
-max   = 5.0
+[params.landing_reward]
+label = "Land on the feet"
+value = 4.0
+min   = 1.0
+max   = 8.0
