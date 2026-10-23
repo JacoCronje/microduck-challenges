@@ -11,7 +11,7 @@ twist = "[sit flag: 1 sit, 0 stand; unused; unused]"
 head  = "[neck_pitch, head_pitch, head_yaw, head_roll]: rad from the default pose"
 
 [recipe]                  # the first training, as is
-num_envs       = 4096
+num_envs       = 1536
 max_iterations = 3000
 seed           = 1
 
