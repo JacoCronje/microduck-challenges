@@ -62,7 +62,7 @@ ENABLE_IMU_ORIENTATION_RANDOMIZATION = False  # obs-level per-env rotation
 ENABLE_ENCODER_BIAS                  = True
 
 # ── Ranges (matched to the velocity env unless roller-specific) ───────────────
-COM_RANDOMIZATION_RANGE          = 0.003   # ±3mm initial, ramped via curriculum
+COM_RANDOMIZATION_RANGE          = 0.003   # ±3mm, held (race4; was ramped to ±10mm)
 HEAD_COM_RANDOMIZATION_RANGE     = 0.003
 MASS_INERTIA_RANDOMIZATION_RANGE = (0.95, 1.05)
 JOINT_FRICTION_RANDOMIZATION_RANGE = (0.9, 1.1)
@@ -259,9 +259,10 @@ def make_env_cfg(
     # Action smoothness (was -1.0 ramped to -2.0 for a calm skate). race1-2 held
     # the sprint's -0.1: it cost 2.85 per episode against forward_speed's 5.17,
     # and the leaders move their joints 50% faster (4.7-5.2 rad/s against 3.1).
-    # race3: -0.05, fine-tuning a working stroke. The sprint's race4 tried -0.02
-    # from scratch: a jittery gait, 3x the falls.
-    cfg.rewards["action_rate_l2"].weight = -0.05
+    # race3 fine-tuned at -0.05: 37% more action change per step, slower
+    # (1.40-1.41 s against 1.36 s) and 15/20 unseen seeds at its first checkpoint;
+    # stopped. The sprint's race4 tried -0.02 from scratch: a jittery gait.
+    cfg.rewards["action_rate_l2"].weight = -0.1
 
     cfg.rewards["self_collisions"] = RewardTermCfg(
         func=mdp.self_collision_cost,
@@ -549,33 +550,10 @@ def make_env_cfg(
         },
     )
 
-    # CoM randomization curricula — velocity's ramp, capped lower for the
-    # balance-sensitive skating task (audit lesson: ±30 mm forced a nervous
-    # gait on the walker; skates are even less forgiving).
-    if ENABLE_COM_RANDOMIZATION:
-        cfg.curriculum["com_range"] = CurriculumTermCfg(
-            func=microduck_mdp.com_range_curriculum,
-            params={
-                "event_name": "randomize_com",
-                "range_stages": [
-                    {"step": 0,         "range": 0.003},
-                    {"step": 500 * NUM_STEPS_PER_ENV,  "range": 0.005},
-                    {"step": 1000 * NUM_STEPS_PER_ENV, "range": 0.01},
-                ],
-            },
-        )
-    if ENABLE_HEAD_COM_RANDOMIZATION:
-        cfg.curriculum["head_com_range"] = CurriculumTermCfg(
-            func=microduck_mdp.com_range_curriculum,
-            params={
-                "event_name": "randomize_head_com",
-                "range_stages": [
-                    {"step": 0,         "range": 0.003},
-                    {"step": 500 * NUM_STEPS_PER_ENV,  "range": 0.005},
-                    {"step": 1000 * NUM_STEPS_PER_ENV, "range": 0.01},
-                ],
-            },
-        )
+    # No CoM randomization curricula since race4: the trunk and head CoM stay at
+    # ±3 mm (COM_RANDOMIZATION_RANGE). The velocity env's ramp widened them to
+    # ±10 mm by iteration 1000, where race1's episode length fell 90 -> 79 and
+    # never came back; the Arena simulates the nominal CoM.
 
     return cfg
 
