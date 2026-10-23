@@ -220,6 +220,15 @@ def make_env_cfg(
         params={"angle_lo": math.radians(60.0), "angle_hi": math.radians(300.0), "rate_norm": 2.0},
     )
 
+    # Imitation: the reference cartwheel's joint pose at the same point of the turn, 90° to its end.
+    # cart1-3 learned the turn but landed leaning on their heads (27° tilt, knees bent); the
+    # reference straightens its legs and comes upright on its way out.
+    cfg.rewards["reference_pose"] = RewardTermCfg(
+        func=cartwheel.reference_pose,
+        weight=3.0,
+        params={"reference": "cartwheel_reference.npz", "std": 0.5},
+    )
+
     # ── Rewards: the landing (gated on completion and the head latch) ────────
     gates = {"gate_lo": LANDING_GATE_LO, "gate_hi": LANDING_GATE_HI}
     cfg.rewards["landing_composite"] = RewardTermCfg(

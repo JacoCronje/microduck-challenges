@@ -487,3 +487,36 @@ def forward_drift(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _ASSET) ->
     """Body-frame forward speed²: a cartwheel travels sideways, never forward (NEGATIVE weight)."""
     asset: Entity = env.scene[asset_cfg.name]
     return torch.nan_to_num(asset.data.root_link_lin_vel_b[:, 0] ** 2, nan=0.0)
+
+
+def reference_pose(
+    env: ManagerBasedRlEnv,
+    reference: str = "cartwheel_reference.npz",
+    std: float = 0.5,
+    angle_lo: float = math.radians(90.0),
+    end_margin: float = math.radians(5.0),
+    asset_cfg: SceneEntityCfg = _ASSET,
+) -> torch.Tensor:
+    """Joint pose like the reference cartwheel's at the same point of the turn, exp(-mean sq err/std²),
+    from angle_lo until end_margin short of where the reference's turn ends; mirrored for a right
+    cartwheel. Indexed by the turn, not a clock, so it cannot be waited out. cart1-3 turned but
+    landed leaning on their heads; the reference straightens its legs and comes upright on the way
+    out, and this shows how. Past its range the landing rewards take over."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update(env, asset)
+    ref = _reference(reference, env.device)
+    if "turn_index" not in ref:
+        ref["turn_index"] = ref["frontier"].contiguous()
+        ref["turn_end"] = float(ref["frontier"].max())
+        ref["perm"] = torch.tensor(_JOINT_PERM, device=env.device)
+        ref["sign"] = torch.tensor(_JOINT_SIGN, device=env.device)
+    _, frontier, _ = _state(env)
+    idx = torch.searchsorted(ref["turn_index"], frontier.contiguous()).clamp(max=len(ref["turn_index"]) - 1)
+    target = ref["joint_pos"][idx]
+    right = (_trigger(env).direction < 0).unsqueeze(1)
+    target = torch.where(right, target[:, ref["perm"]] * ref["sign"], target)
+    joints = asset.data.joint_pos[:, microduck_mdp._servo_joint_ids(env, asset)]
+    err = ((joints - target) ** 2).mean(dim=1)
+    active = _trigger(env).fired & (frontier >= angle_lo) & (frontier < ref["turn_end"] - end_margin)
+    return torch.exp(-err / std ** 2) * active.float()
+
