@@ -3,10 +3,11 @@
     python3 src/microduck_challenges/got_a_talent/cucaracha.py [out.json]
 
 The story is the song's own line, "la cucaracha ya no puede caminar" (the cockroach can't walk
-anymore): a cucaracha scuttles across the front of the stage and two walkers stroll in from the back,
-all three freezing dead on "ya no puede caminar"; a V of five sings, beats its heads in mirror
-symmetry, stares at the cucaracha, sits in sympathy, sends Mexican waves across the V, and bows on
-the last chord while the cucaracha scuttles on again.
+anymore): a sprinter bursts onto the stage, wipes out in the middle of it and lies there
+struggling for the whole show; two walkers stroll in from the back and stop dead on "ya no puede
+caminar"; a crescent of five around the fallen sprinter sings, beats its heads in mirror symmetry, stares
+at it, sits in sympathy, sends Mexican waves across, and bows on the last chord. The sprinter
+struggles where it lies, on cue: see Duck.struggle.
 
 Stage frame: x towards the audience, y to the audience's right, yaw 0 faces the audience.
 head = [neck_pitch (+ beak up, neck back), head_pitch (+ nod down), head_yaw (+ looks to +y),
@@ -20,11 +21,21 @@ from pathlib import Path
 
 SPRINT_REF = "pollen-robotics/microduck-sprint-2m-reference@62afcc461f1d4a5ac22bfbff55ce4900c1afba32"
 DURATION = 20.0
-# The cucaracha (the sprint reference, which walks about 0.4 m/s at most): where it starts (x, y,
-# yaw), and where it stands after its two scuttles, read off the simulation.
-CUCARACHA_START = (1.0, -1.6, 95)
-CUCARACHA_STOP = (0.96, 0.06)
-CUCARACHA_END = (1.02, 0.75)
+RACE9 = "JacoCronje/microduck-sprint-race9@b4db96fde420503f1fca922485ec2a68d4f5104a"
+# The sprinter (race9 ignores its command: it runs from the first step and wipes out after 2.5 m or
+# so): it starts in the front-right corner and runs the stage's long diagonal, the only run long
+# enough to end near the middle. When and where it goes down, read off the simulation.
+CRASHER_START = (1.0, 1.6, -130)
+FALL_T = 1.4
+FALLEN_AT = (-0.6, 0.0)
+# Where each duck starts (x, y, yaw); the chorus's headings are offset by CHORUS_YAW. The chorus is
+# a crescent of onlookers about 0.8 m around where the sprinter falls, the star in front; the
+# sprinter's run passes between the star and the right inner duck.
+LAYOUT = {
+    "star": (0.2, 0.0, 0), "in_l": (-0.53, -0.8, 0), "in_r": (-0.53, +0.8, 0),
+    "out_l": (-1.0, -0.57, 0), "out_r": (-1.0, +0.57, 0),
+    "walk_l": (-0.7, -1.6, 10), "walk_r": (-0.7, +1.6, 10),
+}
 # The chorus's start heading: talent1 checkpoint 2750 turns about 14° to its right while it settles,
 # so it starts turned the other way to face the audience.
 CHORUS_YAW = 10
@@ -55,6 +66,16 @@ class Duck:
     def look(self, t, neck=0.0, pitch=0.0, yaw=0.0, roll=0.0):
         self.head[r(t)] = (neck, pitch, yaw, roll)
 
+    def struggle(self, t0, t1, amp, every):
+        """race9 ignores its command, but it never saw anything but zeros in those slots: alternating
+        a head value jolts its legs. About 0.2 makes it flail where it lies, 1.0 thrash (moving it
+        some 0.2 m over a show); past t1 it lies still again."""
+        t, sign = t0, 1
+        while t < t1 - 1e-9:
+            self.head[r(t)] = (amp * sign, 0, 0, 0)
+            t, sign = t + every, -sign
+        self.head[r(t1)] = (0, 0, 0, 0)
+
     def go(self, t, vx):
         self.walk[r(t)] = vx
 
@@ -84,7 +105,7 @@ class Duck:
             vx = last(self.walk, t) if legs_walker else last(self.flag, t)
             if vx:
                 kf["twist"] = [vx, 0, 0]
-            if not legs_walker and any(last(self.head, t)):
+            if any(last(self.head, t)):
                 kf["head"] = [round(v, 3) for v in last(self.head, t)]
             if any(last(self.trig, t)):
                 kf["triggers"] = list(last(self.trig, t))
@@ -109,31 +130,41 @@ def aim(duck, x, y):
     return max(-1.3, min(1.3, math.atan2(dy, dx)))
 
 
+def place(name):
+    x, y, yaw = LAYOUT[name]
+    return x, y, yaw + CHORUS_YAW
+
+
 def build():
     # ---------------------------------------------------------------- the cast
-    star = Duck("self", 0.55, 0.0, CHORUS_YAW, {"brightness": 0.6, "vibrato": 0.45, "pitch": 0.6})
-    in_l = Duck("self", 0.20, -0.50, CHORUS_YAW, {"pitch": 0.45, "vibrato": 0.2})
-    in_r = Duck("self", 0.20, +0.50, CHORUS_YAW, {"pitch": 0.5, "vibrato": 0.2})
-    out_l = Duck("self", -0.15, -0.95, CHORUS_YAW, {"pitch": 0.15, "buzz": 0.7, "brightness": 0.2})
-    out_r = Duck("self", -0.15, +0.95, CHORUS_YAW, {"pitch": 0.3, "buzz": 0.6})
-    walk_l = Duck(SPRINT_REF, -0.95, -1.45, 10, {"pitch": 0.8})
-    walk_r = Duck(SPRINT_REF, -0.95, +1.50, 10, {"pitch": 0.75})
-    cuca = Duck(SPRINT_REF, *CUCARACHA_START, {"pitch": 0.95, "vibrato": 0.9})
-    chorus = [out_l, in_l, star, in_r, out_r]  # audience's left to right: the wave's order
+    star = Duck("self", *place("star"), {"brightness": 0.6, "vibrato": 0.45, "pitch": 0.6})
+    in_l = Duck("self", *place("in_l"), {"pitch": 0.45, "vibrato": 0.2})
+    in_r = Duck("self", *place("in_r"), {"pitch": 0.5, "vibrato": 0.2})
+    out_l = Duck("self", *place("out_l"), {"pitch": 0.15, "buzz": 0.7, "brightness": 0.2})
+    out_r = Duck("self", *place("out_r"), {"pitch": 0.3, "buzz": 0.6})
+    walk_l = Duck(SPRINT_REF, *LAYOUT["walk_l"], {"pitch": 0.8})
+    walk_r = Duck(SPRINT_REF, *LAYOUT["walk_r"], {"pitch": 0.75})
+    crasher = Duck(RACE9, *CRASHER_START, {"pitch": 0.95, "vibrato": 0.9})
+    chorus = sorted([star, in_l, in_r, out_l, out_r], key=lambda d: d.y)  # audience's left to right: the wave's order
     pairs = [(in_l, in_r), (out_l, out_r)]
 
-    # ---------------------------------------------------------------- 0.0-2.4 wake-up
-    # The V starts asleep, beaks down; heads pop up one at a time from the outside in, each with a
-    # quack, the star last with a look to each side.
+    # ---------------------------------------------------------------- 0.0-2.4 the dash and the crash
+    # Heads follow the sprinter as it bursts in, flinch at the wipe-out, and peer down at it.
+    (x0, y0, _), (x1, y1) = CRASHER_START, FALLEN_AT
+    for k in range(4):
+        f = k / 3
+        for d in chorus:
+            d.look(f * (FALL_T - 0.3), yaw=aim(d, x0 + f * (x1 - x0), y0 + f * (y1 - y0)))
     for d in chorus:
-        d.look(0.0, pitch=0.45)
-    for i, d in enumerate((out_l, out_r, in_l, in_r)):
-        d.look(0.6 + 0.25 * i, neck=0.3, pitch=-0.2)
-        d.quack(0.6 + 0.25 * i)
-    star.look(1.6, neck=0.3, pitch=-0.2, yaw=-0.5)
-    star.quack(1.6)
-    star.look(1.9, neck=0.3, pitch=-0.2, yaw=0.5)
-    star.look(2.2)
+        d.look(FALL_T, neck=0.3, pitch=-0.2, yaw=aim(d, *FALLEN_AT))  # recoil, beak up: "¡ay!"
+        d.look(FALL_T + 0.6, pitch=0.35, yaw=aim(d, *FALLEN_AT))  # and peer down at it
+    star.quack(FALL_T)
+    for d in (in_l, in_r):
+        d.quack(FALL_T + 0.1)
+    crasher.wheee(FALL_T - 0.5, 0.5)  # the yell on the way down
+    crasher.sing(FALL_T, "E5", 0.25, "f", "ee")
+    crasher.sing(FALL_T + 0.25, "C5", 0.25, "mf", "oh")
+    crasher.sing(FALL_T + 0.5, "A4", 0.5, "p", "oo")
 
     # ---------------------------------------------------------------- music
     def oompah(bar, root, fifth, low, high, bass=out_l, pah_low=in_l, pah_high=in_r):
@@ -180,13 +211,11 @@ def build():
         w.go(3.6, 0.3)
         w.go(8.0, 0.0)  # "YA no puede caminar": they stop dead
         w.quack(8.0, 0.3)
-    # The cucaracha scuttles across the front through lines 1 and 2, squeaking, and freezes on "YA".
-    cuca.go(3.6, 0.6)
-    for t in (4.4, 5.6, 6.8):
-        cuca.quack(t, 0.1)
-        cuca.quack(t + 0.2, 0.1)
-    cuca.go(8.0, 0.0)
-    cuca.wheee(8.0, 0.6)
+    # From the floor, the sprinter wails along: "¡ay, ay, ay!".
+    for t in (4.4, 6.8):
+        crasher.quack(t, 0.1)
+        crasher.quack(t + 0.2, 0.1)
+        crasher.quack(t + 0.4, 0.2)
     # Vamp bar: heads come back to the front one pair at a time, centre outwards.
     star.look(2.4)
     for i, (a, b) in enumerate(pairs):
@@ -217,9 +246,9 @@ def build():
     # ---------------------------------------------------------------- 8.0-10.2 line 3: "ya no puede caminar"
     # Everyone looks at the fallen sprinter on "ya", sits down in sympathy, and hangs its head on "NAR".
     for d in chorus:
-        d.look(8.0, pitch=0.3, yaw=aim(d, *CUCARACHA_STOP))
+        d.look(8.0, pitch=0.3, yaw=aim(d, *FALLEN_AT))
         d.sit(8.4)
-        d.look(9.2, pitch=0.45, yaw=0.6 * aim(d, *CUCARACHA_STOP))
+        d.look(9.2, pitch=0.45, yaw=0.6 * aim(d, *FALLEN_AT))
     star.look(9.6, pitch=0.45, yaw=-0.3)  # the star shakes its head: no, no
     star.look(9.8, pitch=0.45, yaw=0.3)
     star.look(10.0, pitch=0.45, yaw=-0.3)
@@ -262,18 +291,27 @@ def build():
             yw = 0.5 if k % 2 == 0 else 0.1
             a.look(t, pitch=p, yaw=-yw)
             b.look(t, pitch=p, yaw=+yw)
+    # The fallen sprinter struggles along: twitching on the beat through lines 1 and 2, thrashing on
+    # "ya no puede caminar" and giving up on "NAR", kicking as each wave passes and on "fu-MAR",
+    # struggling in double time through the finale, and one last kick.
+    crasher.struggle(2.4, 8.0, 0.2, Q)
+    crasher.struggle(8.0, 9.2, 1.0, E)
+    crasher.struggle(11.3, 11.7, 1.0, E)
+    crasher.struggle(13.7, 14.1, 1.0, E)
+    crasher.struggle(15.6, 16.0, 1.0, E)
+    crasher.struggle(16.2, 19.2, 0.2, E)
+    crasher.struggle(19.4, 19.9, 1.0, E)
+
     # "fu-MAR": beaks to the sky together on the downbeat.
     for d in chorus:
         d.look(15.6, neck=0.45, pitch=-0.3)
         d.quack(15.62)
 
     # ---------------------------------------------------------------- 16.2-20 finale
-    # Walkers stroll down to the front line for the curtain call; the cucaracha can walk after all.
+    # Walkers stroll down to the front line for the curtain call.
     for w in (walk_l, walk_r):
         w.go(16.2, 0.3)
         w.go(18.6, 0.0)
-    cuca.go(16.2, 0.6)
-    cuca.go(18.2, 0.0)
     # Double-time mirrored head beats while the tutti sings, outer pair in counter-phase.
     for k in range(12):
         t = 16.2 + k * E
@@ -292,13 +330,13 @@ def build():
             d.sit(18.6 + 0.2 * i)
             d.look(18.6 + 0.2 * i, pitch=0.45)
     for d in chorus:
-        d.look(19.4, neck=0.5, pitch=-0.4, yaw=0.5 * aim(d, *CUCARACHA_END))
+        d.look(19.4, neck=0.5, pitch=-0.4, yaw=0.5 * aim(d, *FALLEN_AT))
     for d in chorus + [walk_l, walk_r]:
         d.quack(19.5, 0.3)
-    cuca.sing(19.4, "F5", 0.5, "ff", "eh")  # the cucaracha gets the last word
+    crasher.sing(19.4, "F5", 0.5, "ff", "eh")  # the sprinter gets the last word from the floor
 
-    ducks = [star, in_l, in_r, out_l, out_r, walk_l, walk_r, cuca]
-    walkers = {id(walk_l), id(walk_r), id(cuca)}
+    ducks = [star, in_l, in_r, out_l, out_r, walk_l, walk_r, crasher]
+    walkers = {id(walk_l), id(walk_r), id(crasher)}
     return {"timeline_version": 2, "duration_s": DURATION,
             "ducks": [d.to_json(legs_walker=id(d) in walkers) for d in ducks]}
 
