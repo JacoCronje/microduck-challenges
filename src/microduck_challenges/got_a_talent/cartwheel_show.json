@@ -1,0 +1,197 @@
+{
+ "timeline_version": 1,
+ "duration_s": 20.0,
+ "voice": {
+  "pitch": 0.6,
+  "brightness": 0.6,
+  "vibrato": 0.35
+ },
+ "song": [
+  {
+   "t": 4.8,
+   "note": "C5",
+   "for": 0.3,
+   "dynamic": "p",
+   "vowel": "mm"
+  },
+  {
+   "t": 5.1,
+   "note": "E5",
+   "for": 0.3,
+   "dynamic": "mp",
+   "vowel": "mm"
+  },
+  {
+   "t": 5.4,
+   "note": "G5",
+   "for": 0.4,
+   "dynamic": "mf",
+   "vowel": "mm"
+  },
+  {
+   "t": 7.12,
+   "note": "G5",
+   "for": 0.15,
+   "dynamic": "f",
+   "vowel": "ah"
+  },
+  {
+   "t": 7.29,
+   "note": "C6",
+   "for": 0.5,
+   "dynamic": "ff",
+   "vowel": "ah"
+  },
+  {
+   "t": 11.12,
+   "note": "G5",
+   "for": 0.15,
+   "dynamic": "f",
+   "vowel": "ah"
+  },
+  {
+   "t": 11.29,
+   "note": "C6",
+   "for": 0.5,
+   "dynamic": "ff",
+   "vowel": "ah"
+  },
+  {
+   "t": 14.76,
+   "note": "G5",
+   "for": 0.15,
+   "dynamic": "f",
+   "vowel": "ah"
+  },
+  {
+   "t": 14.93,
+   "note": "C6",
+   "for": 0.5,
+   "dynamic": "ff",
+   "vowel": "ah"
+  },
+  {
+   "t": 18.18,
+   "note": "G5",
+   "for": 0.15,
+   "dynamic": "f",
+   "vowel": "ah"
+  },
+  {
+   "t": 18.35,
+   "note": "C6",
+   "for": 0.5,
+   "dynamic": "ff",
+   "vowel": "ah"
+  }
+ ],
+ "keyframes": [
+  {
+   "t": 0.0
+  },
+  {
+   "t": 2.0,
+   "triggers": [
+    1,
+    0
+   ]
+  },
+  {
+   "t": 2.2
+  },
+  {
+   "t": 4.0,
+   "triggers": [
+    1,
+    0
+   ]
+  },
+  {
+   "t": 4.2
+  },
+  {
+   "t": 6.0,
+   "twist": [
+    0,
+    1,
+    0
+   ]
+  },
+  {
+   "t": 6.5
+  },
+  {
+   "t": 7.87,
+   "triggers": [
+    1,
+    0
+   ]
+  },
+  {
+   "t": 8.07
+  },
+  {
+   "t": 10.0,
+   "twist": [
+    0,
+    1,
+    0
+   ]
+  },
+  {
+   "t": 10.5
+  },
+  {
+   "t": 11.87,
+   "triggers": [
+    1,
+    0
+   ]
+  },
+  {
+   "t": 12.07
+  },
+  {
+   "t": 13.5,
+   "twist": [
+    0,
+    -1,
+    0
+   ]
+  },
+  {
+   "t": 14.0
+  },
+  {
+   "t": 15.51,
+   "triggers": [
+    1,
+    0
+   ]
+  },
+  {
+   "t": 15.71
+  },
+  {
+   "t": 17.0,
+   "twist": [
+    0,
+    -1,
+    0
+   ]
+  },
+  {
+   "t": 17.5
+  },
+  {
+   "t": 18.93,
+   "triggers": [
+    1,
+    0
+   ]
+  },
+  {
+   "t": 19.13
+  }
+ ]
+}
